@@ -39,6 +39,17 @@ test('a landing page can point to a same-origin catalog page', async () => {
   } finally { globalThis.fetch = originalFetch }
 })
 
+test('pagination follows standard same-origin next links only', async () => {
+  const originalFetch = globalThis.fetch
+  try {
+    globalThis.fetch = async () => new Response('<link href="/catalog?page=2#top" rel="next">', { headers: { 'content-type': 'text/html' } })
+    const request = () => new Request('https://app.example/api/analyze', { method: 'POST', body: JSON.stringify({ url: 'https://catalog.example/catalog?page=1' }) })
+    assert.equal((await (await onRequestPost({ request: request() })).json()).nextCatalogUrl, 'https://catalog.example/catalog?page=2')
+    globalThis.fetch = async () => new Response('<a rel="next" href="https://other.example/page">Next</a>', { headers: { 'content-type': 'text/html' } })
+    assert.equal((await (await onRequestPost({ request: request() })).json()).nextCatalogUrl, undefined)
+  } finally { globalThis.fetch = originalFetch }
+})
+
 test('embedded videos are classified as videos while ordinary page URLs are not', async () => {
   const originalFetch = globalThis.fetch
   globalThis.fetch = async () => new Response('<script type="application/ld+json">{"@type":"VideoObject","url":"https://fcc.gov/article","embedUrl":"https://video.example/player"}</script>', { headers: { 'content-type': 'text/html' } })

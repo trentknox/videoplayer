@@ -192,7 +192,19 @@ export default function App() {
       let page = await analyzePublicPage(draft.url)
       if (!page.listings?.length && page.suggestedCatalogUrl) page = await analyzePublicPage(page.suggestedCatalogUrl)
       const known = new Set(library.media.map((item) => item.sourceUrl))
-      const listings = (page.listings ?? []).filter((item) => !known.has(item.url)).slice(0, 25)
+      const visited = new Set<string>([page.sourceUrl])
+      const listings: NonNullable<AnalysisResult['listings']> = []
+      for (let pageCount = 0; pageCount < 5; pageCount += 1) {
+        for (const item of page.listings ?? []) {
+          if (known.has(item.url)) continue
+          known.add(item.url)
+          listings.push(item)
+          if (listings.length >= 25) break
+        }
+        if (listings.length >= 25 || !page.nextCatalogUrl || visited.has(page.nextCatalogUrl)) break
+        visited.add(page.nextCatalogUrl)
+        page = await analyzePublicPage(page.nextCatalogUrl)
+      }
       if (!listings.length) {
         setNotice('No new titled links were found on this page. Some sites require an API or render their catalog in JavaScript.')
         return
@@ -215,7 +227,7 @@ export default function App() {
         return { ...current, media: [...entries.filter((item) => !existing.has(item.sourceUrl)), ...current.media] }
       })
       setView('library')
-      setNotice(`Added ${entries.length} entries from this page. Some may be links rather than playable videos; scan additional pages separately.`)
+      setNotice(`Added ${entries.length} entries. Some may be links rather than playable videos; scan again for more titles.`)
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not inspect the page.')
     } finally { setImporting(false) }

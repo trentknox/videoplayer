@@ -78,4 +78,5 @@ export interface AnalysisResult {
   notes?: string[]
   listings?: Array<{ url: string; title: string; poster?: string }>
   suggestedCatalogUrl?: string
+  nextCatalogUrl?: string
 }

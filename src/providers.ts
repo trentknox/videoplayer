@@ -132,7 +132,7 @@ export async function analyzePublicPage(rawUrl: string): Promise<AnalysisResult>
     return {
       provider: result.provider as Provider, kind: result.kind, sourceUrl: result.sourceUrl, embedUrl: result.embedUrl,
       externalId: result.externalId, title: result.title, poster: result.poster, description: result.description,
-      durationSeconds: result.durationSeconds ?? 900, notes: result.notes, listings: result.listings, suggestedCatalogUrl: result.suggestedCatalogUrl,
+      durationSeconds: result.durationSeconds ?? 900, notes: result.notes, listings: result.listings, suggestedCatalogUrl: result.suggestedCatalogUrl, nextCatalogUrl: result.nextCatalogUrl,
     }
   } catch {
     // A browser can inspect a page only when that page permits cross-origin reads.
@@ -144,6 +144,15 @@ export async function analyzePublicPage(rawUrl: string): Promise<AnalysisResult>
       const document = new DOMParser().parseFromString(html, 'text/html')
       const meta = (name: string): string | undefined => document.querySelector(`meta[property="${name}"],meta[name="${name}"]`)?.getAttribute('content') || undefined
       const pageUrl = new URL(response.url || fallback.sourceUrl)
+      const nextHref = document.querySelector('link[rel~="next"][href],a[rel~="next"][href]')?.getAttribute('href')
+      let nextCatalogUrl: string | undefined
+      if (nextHref) {
+        try {
+          const next = new URL(nextHref, pageUrl)
+          next.hash = ''
+          if (next.origin === pageUrl.origin && next.href !== pageUrl.href) nextCatalogUrl = next.href
+        } catch { /* Ignore malformed pagination links. */ }
+      }
       const listings: NonNullable<AnalysisResult['listings']> = []
       const seen = new Set<string>()
       for (const link of Array.from(document.querySelectorAll?.('a[href]') ?? [])) {
@@ -164,7 +173,7 @@ export async function analyzePublicPage(rawUrl: string): Promise<AnalysisResult>
         ?? meta('twitter:player') ?? document.querySelector('iframe[src]')?.getAttribute('src')
       const resolved = exposed ? new URL(exposed, response.url || fallback.sourceUrl) : undefined
       if (!resolved || !['http:', 'https:'].includes(resolved.protocol)) {
-        return { ...fallback, title: meta('og:title') || document.title || fallback.title, listings, notes: ['The page was read, but no playable media reference was found.'] }
+        return { ...fallback, title: meta('og:title') || document.title || fallback.title, listings, nextCatalogUrl, notes: ['The page was read, but no playable media reference was found.'] }
       }
       const candidate = analyzeUrl(resolved.href)
       return {
@@ -172,7 +181,7 @@ export async function analyzePublicPage(rawUrl: string): Promise<AnalysisResult>
         sourceUrl: fallback.sourceUrl,
         title: meta('og:title') || document.title || candidate.title,
         description: meta('og:description') || undefined,
-        listings, notes: ['Found a public media reference on a page that permits browser access. Playback depends on the source provider.'],
+        listings, nextCatalogUrl, notes: ['Found a public media reference on a page that permits browser access. Playback depends on the source provider.'],
       }
     } catch {
       return { ...fallback, notes: ['Page analysis is unavailable here. Saved the page link without discovering its media; the site may block embedding.'] }

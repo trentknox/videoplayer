@@ -215,6 +215,21 @@ function discoverCatalogPage(html: string, base: URL): string | undefined {
   return undefined
 }
 
+function discoverNextPage(html: string, base: URL): string | undefined {
+  for (const match of html.matchAll(/<(?:a|link)\b([^>]*)>/gi)) {
+    const tag = match[1]
+    const rel = tag.match(/\brel\s*=\s*["']([^"']+)["']/i)?.[1]
+    if (!rel?.split(/\s+/).some((word) => word.toLowerCase() === 'next')) continue
+    const href = tag.match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1]
+    const resolved = toPublicUrl(href && decodeEntities(href), base)
+    if (!resolved) continue
+    const url = new URL(resolved)
+    url.hash = ''
+    if (url.origin === base.origin && url.href !== base.href) return url.href
+  }
+  return undefined
+}
+
 async function fetchPublicPage(initial: URL): Promise<{ response: Response; finalUrl: URL }> {
   let current = initial
   for (let redirects = 0; redirects <= 5; redirects += 1) {
@@ -280,6 +295,7 @@ export const onRequestPost = async ({ request }: AnalyzeContext): Promise<Respon
     durationSeconds: 900,
     listings: discoverListings(html, finalUrl),
     suggestedCatalogUrl: discoverCatalogPage(html, finalUrl),
+    nextCatalogUrl: discoverNextPage(html, finalUrl),
     notes: [embedUrl
       ? 'Vivid found a standard public metadata or embedded-media reference. It saves the original source; it does not proxy or copy it.'
       : 'No standard public media reference was exposed, so Vivid saved the page as a source record.'],
