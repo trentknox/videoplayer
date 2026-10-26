@@ -8,6 +8,12 @@ import type { AnalysisResult, Channel, ImportDraft, LibraryState, MediaItem, Pla
 
 type View = 'home' | 'library' | 'playlists' | 'channels' | 'settings'
 
+declare global {
+  interface Window {
+    vividWindow?: { minimize: () => void; toggleMaximize: () => void; close: () => void }
+  }
+}
+
 const blankDraft: ImportDraft = {
   url: '', title: '', tags: '', franchise: '', series: '', season: '', episode: '', actors: '', durationMinutes: '',
 }
@@ -261,7 +267,7 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <header className="topbar">
+      <header className={`topbar ${window.vividWindow ? 'desktop-topbar' : ''}`}>
         <button className="brand" onClick={() => setView('home')} aria-label="Go home">
           <span className="brand-mark">V</span><span>Vivid</span>
         </button>
@@ -271,6 +277,11 @@ export default function App() {
           ))}
         </nav>
         <div className="status-pill"><span /> Local-first library</div>
+        {window.vividWindow && <div className="window-controls" aria-label="Window controls">
+          <button aria-label="Minimize window" title="Minimize" onClick={() => window.vividWindow?.minimize()}>−</button>
+          <button aria-label="Maximize or restore window" title="Maximize or restore" onClick={() => window.vividWindow?.toggleMaximize()}>□</button>
+          <button className="window-close" aria-label="Close window" title="Close" onClick={() => window.vividWindow?.close()}>×</button>
+        </div>}
       </header>
 
       {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}

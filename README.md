@@ -32,6 +32,12 @@ npm run make:win
 
 The installer output is placed in `release/`. Production distribution should use a proper Windows code-signing certificate so Windows SmartScreen can establish reputation.
 
+### Automatic Windows updates
+
+Installed Windows builds check the `trentknox/videoplayer` GitHub Releases feed on startup and every six hours, download newer stable releases, and install them when the app closes. Electron Builder produces the installer and `latest.yml` metadata for the release. Publish both artifacts on a GitHub Release with a higher version number.
+
+For safety, automatic updates only run when the installed build contains a verified Windows publisher name generated from a configured signing certificate. The current unsigned development build does not automatically install updates. Configure Windows Authenticode signing before distributing an update-enabled build; users must install that signed build once before it can update itself. A new installer is never downloaded or executed automatically by an unsigned build.
+
 ## Deploy to Cloudflare Pages
 
 ```powershell

@@ -91,6 +91,18 @@ export default function PlayerSurface({ item, onEnded, autoPlay }: PlayerSurface
     )
   }
 
+  if (item.kind === 'catalog' && item.embedUrl === item.sourceUrl) {
+    let source: string | undefined
+    try {
+      const url = new URL(item.sourceUrl)
+      if (url.protocol === 'http:' || url.protocol === 'https:') source = url.href
+    } catch { /* Invalid saved links cannot be opened. */ }
+    return <div className="player-empty">
+      <p>This is a saved website, not an imported video catalog. Vivid has not found individual titles or a playable embed.</p>
+      {source && <a className="text-button" href={source} target="_blank" rel="noopener noreferrer">Open original website ↗</a>}
+    </div>
+  }
+
   if (item.provider === 'youtube') return <YoutubeSurface item={item} onEnded={onEnded} autoPlay={autoPlay} />
 
   if (item.provider === 'direct' || isHls) {

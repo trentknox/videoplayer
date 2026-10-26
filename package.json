@@ -16,7 +16,9 @@
     "deploy:pages": "npm run build && wrangler pages deploy web-dist --project-name=vivid-media-player"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "hls.js": "^1.6.13",
+    "js-yaml": "^4.3.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
@@ -38,13 +40,20 @@
     "directories": {
       "output": "release"
     },
+    "publish": {
+      "provider": "github",
+      "owner": "trentknox",
+      "repo": "videoplayer"
+    },
     "files": [
       "web-dist/**/*",
       "electron/**/*",
       "package.json"
     ],
     "win": {
-      "target": ["nsis"]
+      "target": [
+        "nsis"
+      ]
     },
     "nsis": {
       "oneClick": false,
