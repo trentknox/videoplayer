@@ -9,7 +9,7 @@ import type { AnalysisResult, Channel, ImportDraft, LibraryState, MediaItem, Pla
 type View = 'home' | 'library' | 'playlists' | 'channels' | 'settings'
 
 const blankDraft: ImportDraft = {
-  url: '', title: '', tags: '', franchise: '', series: '', season: '', episode: '', actors: '',
+  url: '', title: '', tags: '', franchise: '', series: '', season: '', episode: '', actors: '', durationMinutes: '',
 }
 
 const accents = ['#8a7dff', '#24d6b8', '#ff8a65', '#ffcc4d', '#4da3ff']
@@ -33,6 +33,13 @@ function providerLabel(provider: MediaItem['provider']): string {
   return provider.replaceAll('-', ' ')
 }
 
+function safeExternalUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : undefined
+  } catch { return undefined }
+}
+
 function sourceGlyph(provider: MediaItem['provider']): string {
   return ({ youtube: '▶', twitch: '◉', plex: '◆', 'cloudflare-stream': '☁', direct: '↗', embed: '◌' })[provider]
 }
@@ -48,7 +55,7 @@ function toMediaItem(analysis: AnalysisResult, draft: ImportDraft, pageAnalysis:
     title: draft.title.trim() || analysis.title,
     description: analysis.description,
     poster: analysis.poster,
-    durationSeconds: analysis.durationSeconds ?? 900,
+    durationSeconds: draft.durationMinutes ? Number(draft.durationMinutes) * 60 : analysis.durationSeconds ?? 900,
     tags: splitList(draft.tags),
     franchise: draft.franchise.trim() || undefined,
     series: draft.series.trim() || undefined,
@@ -63,6 +70,9 @@ function toMediaItem(analysis: AnalysisResult, draft: ImportDraft, pageAnalysis:
 export default function App() {
   const [library, setLibrary] = useState<LibraryState | null>(null)
   const [activeId, setActiveId] = useState<string>()
+  const [activePlaylistId, setActivePlaylistId] = useState<string>()
+  const [activeChannelId, setActiveChannelId] = useState<string>()
+  const [channelSlotId, setChannelSlotId] = useState<string>()
   const [view, setView] = useState<View>('home')
   const [draft, setDraft] = useState<ImportDraft>(blankDraft)
   const [pageAnalysis, setPageAnalysis] = useState(true)
@@ -72,6 +82,7 @@ export default function App() {
   const [playlistName, setPlaylistName] = useState('')
   const [channelName, setChannelName] = useState('')
   const [channelFilter, setChannelFilter] = useState('')
+  const [clock, setClock] = useState(() => new Date())
   const importInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -85,7 +96,13 @@ export default function App() {
     if (library) void saveLibrary(library)
   }, [library])
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(new Date()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
   const active = library?.media.find((item) => item.id === activeId)
+  const activePlaylist = library?.playlists.find((playlist) => playlist.id === activePlaylistId)
   const visibleMedia = useMemo(() => {
     if (!library) return []
     const needle = search.trim().toLowerCase()
@@ -96,8 +113,25 @@ export default function App() {
 
   const allSchedules = useMemo(() => {
     if (!library) return new Map<string, ReturnType<typeof makeSchedule>>()
-    return new Map(library.channels.map((channel) => [channel.id, makeSchedule(channel, library.media)]))
-  }, [library])
+    return new Map(library.channels.map((channel) => [channel.id, makeSchedule(channel, library.media, clock)]))
+  }, [library, clock])
+
+  useEffect(() => {
+    if (!activeChannelId || !library) return
+    const channel = library.channels.find((entry) => entry.id === activeChannelId)
+    if (!channel) return
+    let timer: number | undefined
+    const update = () => {
+      const now = new Date()
+      const slot = nowPlaying(makeSchedule(channel, library.media, now), now)
+      if (!slot) return
+      setActiveId(slot.mediaId)
+      setChannelSlotId(slot.id)
+      timer = window.setTimeout(update, Math.max(100, new Date(slot.endsAt).getTime() - now.getTime() + 50))
+    }
+    update()
+    return () => { if (timer !== undefined) window.clearTimeout(timer) }
+  }, [activeChannelId, library])
 
   function updateLibrary(updater: (current: LibraryState) => LibraryState): void {
     setLibrary((current) => current ? updater(current) : current)
@@ -105,6 +139,14 @@ export default function App() {
 
   function updateDraft<K extends keyof ImportDraft>(key: K, value: ImportDraft[K]): void {
     setDraft((current) => ({ ...current, [key]: value }))
+  }
+
+  function nextInPlaylist(): void {
+    if (!activePlaylist || !library) return
+    const ids = activePlaylist.mediaIds.filter((id) => library.media.some((item) => item.id === id))
+    const index = ids.indexOf(activeId ?? '')
+    if (index >= 0 && index + 1 < ids.length) setActiveId(ids[index + 1])
+    else { setActivePlaylistId(undefined); setNotice('Playlist finished.') }
   }
 
   async function handleImport(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -123,6 +165,8 @@ export default function App() {
       }
       const item = toMediaItem(analysis, draft, pageAnalysis)
       updateLibrary((current) => ({ ...current, media: [item, ...current.media] }))
+      setActivePlaylistId(undefined)
+      setActiveChannelId(undefined)
       setActiveId(item.id)
       setDraft(blankDraft)
       setView('library')
@@ -162,6 +206,16 @@ export default function App() {
     setNotice(activeId ? `Created ${name} with the selected title.` : `Created ${name}.`)
   }
 
+  function updatePlaylist(playlistId: string, mediaId: string, add: boolean): void {
+    updateLibrary((current) => ({
+      ...current,
+      playlists: current.playlists.map((playlist) => playlist.id !== playlistId ? playlist : {
+        ...playlist,
+        mediaIds: add ? [...playlist.mediaIds, mediaId] : playlist.mediaIds.filter((id) => id !== mediaId),
+      }),
+    }))
+  }
+
   function createChannel(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
     const name = channelName.trim()
@@ -183,6 +237,8 @@ export default function App() {
       return
     }
     setActiveId(currentSlot.mediaId)
+    setActivePlaylistId(undefined)
+    setActiveChannelId(channel.id)
     setView('home')
     setNotice(`${channel.name} is live now.`)
   }
@@ -223,13 +279,14 @@ export default function App() {
         <section className="hero-grid">
           <div className="player-panel">
             <div className="section-eyebrow">NOW PLAYING</div>
-            <PlayerSurface item={active} />
+            <PlayerSurface key={activeChannelId ? channelSlotId : activeId} item={active} onEnded={activePlaylist ? nextInPlaylist : undefined} autoPlay={Boolean(activePlaylist || activeChannelId)} />
             <div className="now-playing-meta">
               <div>
                 <h1>{active?.title ?? 'Your media, one screen.'}</h1>
                 {active && <p>{providerLabel(active.provider)} · {active.kind} · {formatRuntime(active.durationSeconds)}</p>}
+                {active && safeExternalUrl(active.sourceUrl) && <a className="text-button" href={safeExternalUrl(active.sourceUrl)} target="_blank" rel="noopener noreferrer">Open original source ↗</a>}
               </div>
-              {active && <button className="secondary-button" onClick={() => addToWatchLater(active.id)}>＋ Watch later</button>}
+              {active && <div>{activePlaylist && <button className="secondary-button" onClick={nextInPlaylist}>Next in {activePlaylist.name} →</button>} <button className="secondary-button" onClick={() => addToWatchLater(active.id)}>＋ Watch later</button></div>}
             </div>
           </div>
           <aside className="import-card">
@@ -251,6 +308,7 @@ export default function App() {
                 <label>Season<input min="1" inputMode="numeric" placeholder="#" value={draft.season} onChange={(event) => updateDraft('season', event.target.value)} /></label>
                 <label>Episode<input min="1" inputMode="numeric" placeholder="#" value={draft.episode} onChange={(event) => updateDraft('episode', event.target.value)} /></label>
               </div>
+              <label>Runtime in minutes <span>optional; used for channel scheduling</span><input type="number" min="1" max="1440" placeholder="15" value={draft.durationMinutes} onChange={(event) => updateDraft('durationMinutes', event.target.value)} /></label>
               <label className="checkbox-row"><input type="checkbox" checked={pageAnalysis} onChange={(event) => setPageAnalysis(event.target.checked)} /> Analyze permitted public-page metadata</label>
               <button className="primary-button" disabled={importing}>{importing ? 'Analyzing…' : 'Analyze & import'}</button>
             </form>
@@ -260,21 +318,21 @@ export default function App() {
 
         <section className="content-section">
           <div className="section-heading"><div><span className="section-eyebrow">YOUR LIBRARY</span><h2>Continue watching</h2></div><button className="text-button" onClick={() => setView('library')}>Open library →</button></div>
-          <MediaGrid media={library.media.slice(0, 6)} activeId={activeId} onPlay={(id) => { setActiveId(id); setView('home') }} onRemove={removeMedia} />
+          <MediaGrid media={library.media.slice(0, 6)} activeId={activeId} onPlay={(id) => { setActiveChannelId(undefined); setActivePlaylistId(undefined); setActiveId(id); setView('home') }} onRemove={removeMedia} />
         </section>
       </>}
 
       {view === 'library' && <section className="content-section library-view">
         <div className="section-heading"><div><span className="section-eyebrow">PRIVATE CATALOG</span><h1>Library</h1></div><input className="search-input" placeholder="Search title, actor, franchise, tag…" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
         <div className="filter-summary">{visibleMedia.length} item{visibleMedia.length === 1 ? '' : 's'} · Stored in this browser</div>
-        <MediaGrid media={visibleMedia} activeId={activeId} onPlay={(id) => { setActiveId(id); setView('home') }} onRemove={removeMedia} />
+        <MediaGrid media={visibleMedia} activeId={activeId} onPlay={(id) => { setActiveChannelId(undefined); setActivePlaylistId(undefined); setActiveId(id); setView('home') }} onRemove={removeMedia} />
       </section>}
 
       {view === 'playlists' && <section className="content-section">
         <div className="section-heading"><div><span className="section-eyebrow">CURATED QUEUES</span><h1>Playlists</h1></div></div>
         <form className="inline-form" onSubmit={createPlaylist}><input value={playlistName} onChange={(event) => setPlaylistName(event.target.value)} placeholder="New playlist name" /><button className="primary-button">Create playlist</button></form>
         <div className="playlist-grid">
-          {library.playlists.map((playlist) => <PlaylistCard key={playlist.id} playlist={playlist} media={library.media} onPlay={(id) => { setActiveId(id); setView('home') }} />)}
+          {library.playlists.map((playlist) => <PlaylistCard key={playlist.id} playlist={playlist} media={library.media} onChange={(id, add) => updatePlaylist(playlist.id, id, add)} onPlay={(id) => { setActiveChannelId(undefined); setActivePlaylistId(playlist.id); setActiveId(id); setView('home') }} />)}
         </div>
       </section>}
 
@@ -283,7 +341,7 @@ export default function App() {
         <p className="channel-intro">Build continuous schedules from your saved library. A channel chooses the right item for the current time; it does not copy or rebroadcast source media.</p>
         <form className="inline-form channel-form" onSubmit={createChannel}><input value={channelName} onChange={(event) => setChannelName(event.target.value)} placeholder="Channel name" /><input value={channelFilter} onChange={(event) => setChannelFilter(event.target.value)} placeholder="Optional filter: actor, franchise, tag…" /><button className="primary-button">Launch 24/7 channel</button></form>
         <div className="channel-grid">
-          {library.channels.map((channel) => <ChannelCard key={channel.id} channel={channel} media={library.media} onPlay={() => playChannel(channel)} />)}
+          {library.channels.map((channel) => <ChannelCard key={channel.id} channel={channel} media={library.media} clock={clock} onPlay={() => playChannel(channel)} />)}
           {!library.channels.length && <div className="empty-state">Create a channel such as “Saturday Sci-Fi,” “Action by Keanu,” or “Live Creator Loop.”</div>}
         </div>
       </section>}
@@ -319,14 +377,14 @@ function MediaGrid({ media, activeId, onPlay, onRemove }: MediaGridProps) {
   </article>)}</div>
 }
 
-function PlaylistCard({ playlist, media, onPlay }: { playlist: Playlist; media: MediaItem[]; onPlay: (id: string) => void }) {
+function PlaylistCard({ playlist, media, onPlay, onChange }: { playlist: Playlist; media: MediaItem[]; onPlay: (id: string) => void; onChange: (id: string, add: boolean) => void }) {
   const entries = playlist.mediaIds.map((id) => media.find((item) => item.id === id)).filter((item): item is MediaItem => Boolean(item))
-  return <article className="playlist-card"><div className="playlist-cover"><span>≋</span></div><div><span className="section-eyebrow">PLAYLIST</span><h2>{playlist.name}</h2><p>{entries.length} saved title{entries.length === 1 ? '' : 's'}</p>{entries[0] && <button className="text-button" onClick={() => onPlay(entries[0].id)}>Play first →</button>}</div></article>
+  return <article className="playlist-card"><div className="playlist-cover"><span>≋</span></div><div><span className="section-eyebrow">PLAYLIST</span><h2>{playlist.name}</h2><p>{entries.length} saved title{entries.length === 1 ? '' : 's'}</p>{entries[0] && <button className="text-button" onClick={() => onPlay(entries[0].id)}>Play first →</button>}<details><summary>Edit titles</summary>{media.map((item) => <label className="checkbox-row" key={item.id}><input type="checkbox" checked={playlist.mediaIds.includes(item.id)} onChange={(event) => onChange(item.id, event.target.checked)} /> {item.title}</label>)}</details></div></article>
 }
 
-function ChannelCard({ channel, media, onPlay }: { channel: Channel; media: MediaItem[]; onPlay: () => void }) {
-  const schedule = makeSchedule(channel, media)
-  const live = nowPlaying(schedule)
+function ChannelCard({ channel, media, clock, onPlay }: { channel: Channel; media: MediaItem[]; clock: Date; onPlay: () => void }) {
+  const schedule = makeSchedule(channel, media, clock)
+  const live = nowPlaying(schedule, clock)
   const liveItem = live ? media.find((item) => item.id === live.mediaId) : undefined
   return <article className="channel-card" style={{ '--accent': channel.accent } as CSSProperties}>
     <div className="channel-signal"><span /> LIVE</div>

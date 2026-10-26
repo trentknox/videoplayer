@@ -12,18 +12,22 @@ function itemMatches(item: MediaItem, filter: string): boolean {
   return haystack.includes(needle)
 }
 
-export function makeSchedule(channel: Channel, media: MediaItem[]): ScheduleSlot[] {
+export function makeSchedule(channel: Channel, media: MediaItem[], at = new Date()): ScheduleSlot[] {
   const candidates = media.filter((item) => itemMatches(item, channel.filter))
   if (!candidates.length) return []
-  const anchor = new Date(channel.anchor)
-  const end = new Date(anchor.getTime() + channel.durationHours * 60 * 60 * 1000)
+  const anchor = new Date(channel.anchor).getTime()
+  const cycle = Math.max(1, channel.durationHours || 24) * 60 * 60 * 1000
+  if (!Number.isFinite(anchor) || !Number.isFinite(at.getTime())) return []
+  const cycleIndex = Math.max(0, Math.floor((at.getTime() - anchor) / cycle))
+  const start = anchor + cycleIndex * cycle
+  const end = start + cycle
   const slots: ScheduleSlot[] = []
-  let cursor = anchor.getTime()
+  let cursor = start
   let index = 0
-  while (cursor < end.getTime()) {
+  while (cursor < end) {
     const item = candidates[index % candidates.length]
-    const duration = Math.max(item.durationSeconds, minimumDuration) * 1000
-    const next = Math.min(cursor + duration, end.getTime())
+    const duration = Math.max(Number.isFinite(item.durationSeconds) ? item.durationSeconds : minimumDuration, minimumDuration) * 1000
+    const next = Math.min(cursor + duration, end)
     slots.push({
       id: `${channel.id}-${cursor}-${item.id}`,
       channelId: channel.id,

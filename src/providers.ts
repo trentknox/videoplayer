@@ -70,13 +70,14 @@ function twitchAnalysis(url: URL): AnalysisResult | null {
 
 function cloudflareStreamAnalysis(url: URL): AnalysisResult | null {
   const host = url.hostname.toLowerCase()
-  if (!host.includes('cloudflarestream.com') && host !== 'videodelivery.net' && host !== 'iframe.videodelivery.net') return null
+  const customerHost = host === 'cloudflarestream.com' || host.endsWith('.cloudflarestream.com')
+  if (!customerHost && host !== 'videodelivery.net' && host !== 'iframe.videodelivery.net') return null
   const uid = url.pathname.split('/').filter(Boolean)[0]
   if (!uid) return null
   const isManifest = /\/manifest\/[^/]+\.m3u8(?:$|[?#])/i.test(url.pathname)
   const iframeUrl = host === 'iframe.videodelivery.net'
     ? `https://iframe.videodelivery.net/${encodeURIComponent(uid)}`
-    : host.includes('cloudflarestream.com')
+    : customerHost
       ? `${url.protocol}//${url.host}/${encodeURIComponent(uid)}/iframe`
       : undefined
   if (!iframeUrl && !isManifest) return null
@@ -113,23 +114,27 @@ export function analyzeUrl(rawUrl: string): AnalysisResult {
   }
   return {
     provider: 'embed', kind: 'catalog', sourceUrl: url.toString(), embedUrl: url.toString(), title: titleFromUrl(url), durationSeconds: 1800,
-    notes: ['Saved as an embeddable source. Use Analyze public page to discover standard video or iframe metadata where the site permits it.'],
+    notes: ['Saved the page link. The page may block embedding; its media has not been identified.'],
   }
 }
 
 export async function analyzePublicPage(rawUrl: string): Promise<AnalysisResult> {
   const fallback = analyzeUrl(rawUrl)
   if (fallback.provider !== 'embed') return fallback
-  const response = await fetch('/api/analyze', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: rawUrl }),
-  })
-  if (!response.ok) return fallback
-  const result = await response.json() as Partial<AnalysisResult>
-  if (!result.embedUrl || !result.provider || !result.kind || !result.sourceUrl || !result.title) return fallback
-  return {
-    provider: result.provider as Provider, kind: result.kind, sourceUrl: result.sourceUrl, embedUrl: result.embedUrl,
-    externalId: result.externalId, title: result.title, poster: result.poster, description: result.description,
-    durationSeconds: result.durationSeconds ?? 900, notes: result.notes,
+  try {
+    const response = await fetch('/api/analyze', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: rawUrl }),
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const result = await response.json() as Partial<AnalysisResult>
+    if (!result.embedUrl || !result.provider || !result.kind || !result.sourceUrl || !result.title) throw new Error('Invalid analyzer response')
+    return {
+      provider: result.provider as Provider, kind: result.kind, sourceUrl: result.sourceUrl, embedUrl: result.embedUrl,
+      externalId: result.externalId, title: result.title, poster: result.poster, description: result.description,
+      durationSeconds: result.durationSeconds ?? 900, notes: result.notes,
+    }
+  } catch {
+    return { ...fallback, notes: ['Page analysis is unavailable here. Saved the page link without discovering its media; the site may block embedding.'] }
   }
 }
 

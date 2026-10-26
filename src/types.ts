@@ -62,6 +62,7 @@ export interface ImportDraft {
   season: string
   episode: string
   actors: string
+  durationMinutes: string
 }
 
 export interface AnalysisResult {

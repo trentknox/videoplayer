@@ -1,11 +1,66 @@
 import { useEffect, useRef } from 'react'
 import type { MediaItem } from './types'
 
-interface PlayerSurfaceProps {
-  item?: MediaItem
+type YoutubePlayer = { destroy: () => void }
+type YoutubeApi = { Player: new (element: HTMLElement, options: { events: { onStateChange: (event: { data: number }) => void } }) => YoutubePlayer }
+declare global { interface Window { YT?: YoutubeApi; onYouTubeIframeAPIReady?: () => void } }
+let youtubeApiPromise: Promise<YoutubeApi> | undefined
+
+function loadYoutubeApi(): Promise<YoutubeApi> {
+  if (window.YT?.Player) return Promise.resolve(window.YT)
+  if (!youtubeApiPromise) {
+    youtubeApiPromise = new Promise<YoutubeApi>((resolve, reject) => {
+      const previous = window.onYouTubeIframeAPIReady
+      window.onYouTubeIframeAPIReady = () => {
+        previous?.()
+        if (window.YT?.Player) resolve(window.YT)
+        else reject(new Error('YouTube player API unavailable'))
+      }
+      const script = document.createElement('script')
+      script.src = 'https://www.youtube.com/iframe_api'
+      script.onerror = () => reject(new Error('Unable to load YouTube player API'))
+      document.head.appendChild(script)
+    }).catch((error) => { youtubeApiPromise = undefined; throw error })
+  }
+  return youtubeApiPromise
 }
 
-export default function PlayerSurface({ item }: PlayerSurfaceProps) {
+function YoutubeSurface({ item, onEnded, autoPlay }: { item: MediaItem; onEnded?: () => void; autoPlay?: boolean }) {
+  const container = useRef<HTMLDivElement>(null)
+  const endedRef = useRef(onEnded)
+  endedRef.current = onEnded
+  useEffect(() => {
+    const parent = container.current
+    if (!parent) return
+    let cancelled = false
+    let player: YoutubePlayer | undefined
+    const frame = document.createElement('iframe')
+    const url = new URL(item.embedUrl)
+    url.searchParams.set('enablejsapi', '1')
+    if (autoPlay) url.searchParams.set('autoplay', '1')
+    if (window.location.origin !== 'null') url.searchParams.set('origin', window.location.origin)
+    frame.src = url.href
+    frame.className = 'media-embed'
+    frame.title = item.title
+    frame.allow = 'accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; fullscreen'
+    frame.allowFullscreen = true
+    parent.appendChild(frame)
+    void loadYoutubeApi().then((api) => {
+      if (cancelled) return
+      player = new api.Player(frame, { events: { onStateChange: (event) => { if (event.data === 0) endedRef.current?.() } } })
+    }).catch(() => { /* The iframe remains playable even if the API fails. */ })
+    return () => { cancelled = true; player?.destroy(); frame.remove() }
+  }, [item.id, item.embedUrl, item.title, autoPlay])
+  return <div ref={container} />
+}
+
+interface PlayerSurfaceProps {
+  item?: MediaItem
+  onEnded?: () => void
+  autoPlay?: boolean
+}
+
+export default function PlayerSurface({ item, onEnded, autoPlay }: PlayerSurfaceProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const isHls = Boolean(item?.embedUrl.match(/\.m3u8(?:$|[?#])/i))
 
@@ -36,6 +91,8 @@ export default function PlayerSurface({ item }: PlayerSurfaceProps) {
     )
   }
 
+  if (item.provider === 'youtube') return <YoutubeSurface item={item} onEnded={onEnded} autoPlay={autoPlay} />
+
   if (item.provider === 'direct' || isHls) {
     return (
       <video
@@ -44,6 +101,7 @@ export default function PlayerSurface({ item }: PlayerSurfaceProps) {
         controls
         autoPlay
         playsInline
+        onEnded={onEnded}
         src={item.embedUrl}
       >
         Your browser cannot play this source.
