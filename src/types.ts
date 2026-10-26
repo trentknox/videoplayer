@@ -1,0 +1,78 @@
+export type Provider = 'youtube' | 'twitch' | 'plex' | 'cloudflare-stream' | 'direct' | 'embed'
+export type MediaKind = 'video' | 'playlist' | 'channel' | 'catalog' | 'stream'
+
+export interface MediaItem {
+  id: string
+  provider: Provider
+  kind: MediaKind
+  sourceUrl: string
+  embedUrl: string
+  externalId?: string
+  title: string
+  description?: string
+  poster?: string
+  durationSeconds: number
+  tags: string[]
+  franchise?: string
+  series?: string
+  season?: number
+  episode?: number
+  actors: string[]
+  addedAt: string
+  importMode: 'single' | 'playlist' | 'channel' | 'catalog' | 'page-analysis'
+}
+
+export interface Playlist {
+  id: string
+  name: string
+  mediaIds: string[]
+  createdAt: string
+}
+
+export interface Channel {
+  id: string
+  name: string
+  description: string
+  accent: string
+  filter: string
+  anchor: string
+  durationHours: number
+}
+
+export interface ScheduleSlot {
+  id: string
+  channelId: string
+  mediaId: string
+  startsAt: string
+  endsAt: string
+}
+
+export interface LibraryState {
+  media: MediaItem[]
+  playlists: Playlist[]
+  channels: Channel[]
+}
+
+export interface ImportDraft {
+  url: string
+  title: string
+  tags: string
+  franchise: string
+  series: string
+  season: string
+  episode: string
+  actors: string
+}
+
+export interface AnalysisResult {
+  provider: Provider
+  kind: MediaKind
+  sourceUrl: string
+  embedUrl: string
+  externalId?: string
+  title: string
+  poster?: string
+  description?: string
+  durationSeconds?: number
+  notes?: string[]
+}
