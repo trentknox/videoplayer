@@ -5,6 +5,7 @@ release/
 release-update/
 release-frameless/
 release-final/
+release-catalog/
 .wrangler/
 *.tsbuildinfo
 .env
