@@ -1,1 +1,1 @@
-/* /index.html 200
+# Client-side navigation is currently state-based, so no path fallback is needed.

@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react'
-import Hls from 'hls.js'
 import type { MediaItem } from './types'
 
 interface PlayerSurfaceProps {
@@ -12,11 +11,20 @@ export default function PlayerSurface({ item }: PlayerSurfaceProps) {
 
   useEffect(() => {
     const video = videoRef.current
-    if (!item || !video || !isHls || !Hls.isSupported()) return
-    const hls = new Hls({ enableWorker: true })
-    hls.loadSource(item.embedUrl)
-    hls.attachMedia(video)
-    return () => hls.destroy()
+    if (!item || !video || !isHls) return
+    let cancelled = false
+    let destroy: (() => void) | undefined
+    void import('hls.js').then(({ default: Hls }) => {
+      if (cancelled || !Hls.isSupported()) return
+      const hls = new Hls({ enableWorker: true })
+      hls.loadSource(item.embedUrl)
+      hls.attachMedia(video)
+      destroy = () => hls.destroy()
+    })
+    return () => {
+      cancelled = true
+      destroy?.()
+    }
   }, [item, isHls])
 
   if (!item) {
@@ -36,7 +44,7 @@ export default function PlayerSurface({ item }: PlayerSurfaceProps) {
         controls
         autoPlay
         playsInline
-        src={isHls && Hls.isSupported() ? undefined : item.embedUrl}
+        src={item.embedUrl}
       >
         Your browser cannot play this source.
       </video>
