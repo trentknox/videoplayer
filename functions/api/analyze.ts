@@ -198,7 +198,7 @@ function discoverListings(html: string, base: URL): Array<{ url: string; title: 
     const poster = toPublicUrl(decodeEntities(attribute(image, 'src') ?? attribute(image, 'data-src') ?? ''), base)
     seen.add(url.href)
     items.push({ url: url.href, title: decodeEntities(title.trim()).slice(0, 200), poster })
-    if (items.length >= 50) break
+    if (items.length >= 200) break
   }
   return items
 }

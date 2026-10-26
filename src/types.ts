@@ -51,6 +51,7 @@ export interface LibraryState {
   media: MediaItem[]
   playlists: Playlist[]
   channels: Channel[]
+  catalogCursors?: Record<string, string>
 }
 
 export interface ImportDraft {
@@ -79,4 +80,5 @@ export interface AnalysisResult {
   listings?: Array<{ url: string; title: string; poster?: string }>
   suggestedCatalogUrl?: string
   nextCatalogUrl?: string
+  analysisUnavailable?: boolean
 }

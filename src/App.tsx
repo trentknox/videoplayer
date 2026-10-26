@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react'
 import PlayerSurface from './PlayerSurface'
 import { exportLibrary, importLibrary, loadLibrary, saveLibrary } from './library'
 import { analyzePublicPage, analyzeUrl, enrichYouTubeItem } from './providers'
+import { scanCatalog } from './catalogScan'
 import { formatClock, makeSchedule, nowPlaying } from './scheduler'
 import type { AnalysisResult, Channel, ImportDraft, LibraryState, MediaItem, Playlist } from './types'
 
@@ -189,24 +190,17 @@ export default function App() {
     setImporting(true)
     setNotice('Looking for titles on this page…')
     try {
-      let page = await analyzePublicPage(draft.url)
-      if (!page.listings?.length && page.suggestedCatalogUrl) page = await analyzePublicPage(page.suggestedCatalogUrl)
-      const known = new Set(library.media.map((item) => item.sourceUrl))
-      const visited = new Set<string>([page.sourceUrl])
-      const listings: NonNullable<AnalysisResult['listings']> = []
-      for (let pageCount = 0; pageCount < 5; pageCount += 1) {
-        for (const item of page.listings ?? []) {
-          if (known.has(item.url)) continue
-          known.add(item.url)
-          listings.push(item)
-          if (listings.length >= 25) break
-        }
-        if (listings.length >= 25 || !page.nextCatalogUrl || visited.has(page.nextCatalogUrl)) break
-        visited.add(page.nextCatalogUrl)
-        page = await analyzePublicPage(page.nextCatalogUrl)
-      }
+      const source = new URL(draft.url).href
+      const start = library.catalogCursors?.[source] ?? source
+      const { listings, cursor } = await scanCatalog(start, library.media.map((item) => item.sourceUrl), analyzePublicPage)
       if (!listings.length) {
-        setNotice('No new titled links were found on this page. Some sites require an API or render their catalog in JavaScript.')
+        updateLibrary((current) => {
+          const cursors = { ...current.catalogCursors }
+          if (cursor) cursors[source] = cursor
+          else delete cursors[source]
+          return { ...current, catalogCursors: cursors }
+        })
+        setNotice(cursor ? 'No new titles in this batch. Scan again to continue to later pages.' : 'No new titled links found. Some sites require an API or render their catalog in JavaScript.')
         return
       }
       const entries: MediaItem[] = []
@@ -224,7 +218,10 @@ export default function App() {
       }
       updateLibrary((current) => {
         const existing = new Set(current.media.map((item) => item.sourceUrl))
-        return { ...current, media: [...entries.filter((item) => !existing.has(item.sourceUrl)), ...current.media] }
+        const cursors = { ...current.catalogCursors }
+        if (cursor) cursors[source] = cursor
+        else delete cursors[source]
+        return { ...current, catalogCursors: cursors, media: [...entries.filter((item) => !existing.has(item.sourceUrl)), ...current.media] }
       })
       setView('library')
       setNotice(`Added ${entries.length} entries. Some may be links rather than playable videos; scan again for more titles.`)
