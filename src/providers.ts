@@ -134,7 +134,30 @@ export async function analyzePublicPage(rawUrl: string): Promise<AnalysisResult>
       durationSeconds: result.durationSeconds ?? 900, notes: result.notes,
     }
   } catch {
-    return { ...fallback, notes: ['Page analysis is unavailable here. Saved the page link without discovering its media; the site may block embedding.'] }
+    // A browser can inspect a page only when that page permits cross-origin reads.
+    // This path also works in the desktop shell without exposing a local server.
+    try {
+      const response = await fetch(fallback.sourceUrl, { mode: 'cors', credentials: 'omit', signal: AbortSignal.timeout(8000) })
+      if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) throw new Error('Page unavailable')
+      const html = (await response.text()).slice(0, 350_000)
+      const document = new DOMParser().parseFromString(html, 'text/html')
+      const meta = (name: string): string | undefined => document.querySelector(`meta[property="${name}"],meta[name="${name}"]`)?.getAttribute('content') || undefined
+      const exposed = meta('og:video:secure_url') ?? meta('og:video:url') ?? meta('og:video') ?? meta('twitter:player:stream')
+        ?? document.querySelector('video[src],video source[src]')?.getAttribute('src')
+        ?? meta('twitter:player') ?? document.querySelector('iframe[src]')?.getAttribute('src')
+      const resolved = exposed ? new URL(exposed, response.url || fallback.sourceUrl) : undefined
+      if (!resolved || !['http:', 'https:'].includes(resolved.protocol)) throw new Error('No public media reference')
+      const candidate = analyzeUrl(resolved.href)
+      return {
+        ...candidate,
+        sourceUrl: fallback.sourceUrl,
+        title: meta('og:title') || document.title || candidate.title,
+        description: meta('og:description') || undefined,
+        notes: ['Found a public media reference on a page that permits browser access. Playback depends on the source provider.'],
+      }
+    } catch {
+      return { ...fallback, notes: ['Page analysis is unavailable here. Saved the page link without discovering its media; the site may block embedding.'] }
+    }
   }
 }
 
