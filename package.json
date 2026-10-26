@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "desktop": "npm run build && electron .",
     "make:win": "npm run build && electron-builder --win nsis",
-    "deploy:pages": "npm run build && wrangler pages deploy dist --project-name=vivid-media-player"
+    "deploy:pages": "npm run build && wrangler pages deploy web-dist --project-name=vivid-media-player"
   },
   "dependencies": {
     "hls.js": "^1.6.13",
@@ -34,8 +34,11 @@
     "appId": "com.cybercitymedia.vivid",
     "productName": "Vivid Media Player",
     "asar": true,
+    "directories": {
+      "output": "release"
+    },
     "files": [
-      "dist/**/*",
+      "web-dist/**/*",
       "electron/**/*",
       "package.json"
     ],

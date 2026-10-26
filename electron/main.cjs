@@ -23,7 +23,7 @@ function createWindow() {
   if (devUrl) {
     mainWindow.loadURL(devUrl)
   } else {
-    mainWindow.loadURL(pathToFileURL(path.join(__dirname, '..', 'dist', 'index.html')).toString())
+    mainWindow.loadURL(pathToFileURL(path.join(__dirname, '..', 'web-dist', 'index.html')).toString())
   }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

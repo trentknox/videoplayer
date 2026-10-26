@@ -90,7 +90,7 @@ export default function App() {
     if (!library) return []
     const needle = search.trim().toLowerCase()
     if (!needle) return library.media
-    return library.media.filter((item) => [item.title, item.provider, item.franchise, item.series, ...item.tags, ...item.actors]
+    return library.media.filter((item) => [item.title, item.provider, item.franchise, item.series, item.season, item.episode, ...item.tags, ...item.actors]
       .filter(Boolean).join(' ').toLowerCase().includes(needle))
   }, [library, search])
 

@@ -36,7 +36,7 @@ The installer output is placed in `release/`. Production distribution should use
 
 ```powershell
 npm run build
-npx wrangler pages deploy dist --project-name=vivid-media-player
+npx wrangler pages deploy web-dist --project-name=vivid-media-player
 ```
 
 The Pages build is static and stores a viewer's library only in their browser. It contains no Plex or provider credentials. A future Cloudflare Workers/D1 layer can add accounts and shared catalogs.

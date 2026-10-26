@@ -15,14 +15,15 @@ function respond(body: unknown, status = 200): Response {
 }
 
 function isPrivateHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/\.$/, '')
+  const host = hostname.toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '')
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true
-  if (host === '::1' || host === '[::1]' || host.startsWith('fc') || host.startsWith('fd')) return true
+  if (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || /^fe[89ab][0-9a-f:]*$/i.test(host)) return true
   const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
   if (!ipv4) return false
   const octets = ipv4.slice(1).map(Number)
   if (octets.some((part) => part > 255)) return true
   return octets[0] === 0 || octets[0] === 10 || octets[0] === 127 || octets[0] >= 224
+    || (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127)
     || (octets[0] === 169 && octets[1] === 254)
     || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
     || (octets[0] === 192 && octets[1] === 168)
@@ -68,6 +69,60 @@ function attributeSource(html: string, element: string): string | undefined {
   return tag?.[1]
 }
 
+function textField(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function findVideoObject(value: unknown, depth = 0): Record<string, unknown> | undefined {
+  if (depth > 6 || !value) return undefined
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findVideoObject(item, depth + 1)
+      if (found) return found
+    }
+    return undefined
+  }
+  if (typeof value !== 'object') return undefined
+  const record = value as Record<string, unknown>
+  const type = record['@type']
+  const types = Array.isArray(type) ? type : [type]
+  if (types.some((entry) => entry === 'VideoObject')) return record
+  for (const key of ['@graph', 'mainEntity', 'itemListElement', 'video', 'associatedMedia']) {
+    const found = findVideoObject(record[key], depth + 1)
+    if (found) return found
+  }
+  return undefined
+}
+
+interface StructuredVideo {
+  url?: string
+  iframe?: string
+  title?: string
+  poster?: string
+  description?: string
+}
+
+function structuredVideo(html: string, base: URL): StructuredVideo {
+  const scripts = html.matchAll(/<script[^>]+type=["']application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)
+  for (const script of scripts) {
+    try {
+      const video = findVideoObject(JSON.parse(script[1]))
+      if (!video) continue
+      const thumbnail = Array.isArray(video.thumbnailUrl) ? video.thumbnailUrl[0] : video.thumbnailUrl
+      return {
+        url: toPublicUrl(textField(video.contentUrl) ?? textField(video.url), base),
+        iframe: toPublicUrl(textField(video.embedUrl), base),
+        title: textField(video.name),
+        poster: toPublicUrl(textField(thumbnail), base),
+        description: textField(video.description),
+      }
+    } catch {
+      // Invalid JSON-LD is common on public pages; continue to the next source.
+    }
+  }
+  return {}
+}
+
 async function readLimited(response: Response): Promise<string> {
   if (!response.body) return ''
   const reader = response.body.getReader()
@@ -95,7 +150,8 @@ async function readLimited(response: Response): Promise<string> {
   return new TextDecoder().decode(bytes)
 }
 
-function publicCandidate(html: string, base: URL): { url?: string; iframe?: string } {
+function publicCandidate(html: string, base: URL): StructuredVideo {
+  const structured = structuredVideo(html, base)
   const source = metadata(html, 'og:video:secure_url')
     ?? metadata(html, 'og:video:url')
     ?? metadata(html, 'og:video')
@@ -103,7 +159,11 @@ function publicCandidate(html: string, base: URL): { url?: string; iframe?: stri
     ?? attributeSource(html, 'source')
     ?? attributeSource(html, 'video')
   const iframe = metadata(html, 'twitter:player') ?? attributeSource(html, 'iframe')
-  return { url: toPublicUrl(source, base), iframe: toPublicUrl(iframe, base) }
+  return {
+    ...structured,
+    url: toPublicUrl(source, base) ?? structured.url,
+    iframe: toPublicUrl(iframe, base) ?? structured.iframe,
+  }
 }
 
 async function fetchPublicPage(initial: URL): Promise<{ response: Response; finalUrl: URL }> {
@@ -156,9 +216,9 @@ export const onRequestPost = async ({ request }: AnalyzeContext): Promise<Respon
   const html = await readLimited(response)
   const candidate = publicCandidate(html, finalUrl)
   const embedUrl = candidate.url ?? candidate.iframe
-  const title = titleFromDocument(html) ?? finalUrl.hostname
-  const poster = toPublicUrl(metadata(html, 'og:image') ?? metadata(html, 'twitter:image'), finalUrl)
-  const description = metadata(html, 'og:description') ?? metadata(html, 'description')
+  const title = candidate.title ?? titleFromDocument(html) ?? finalUrl.hostname
+  const poster = candidate.poster ?? toPublicUrl(metadata(html, 'og:image') ?? metadata(html, 'twitter:image'), finalUrl)
+  const description = candidate.description ?? metadata(html, 'og:description') ?? metadata(html, 'description')
 
   return respond({
     provider: candidate.url && directMedia.test(candidate.url) ? 'direct' : 'embed',

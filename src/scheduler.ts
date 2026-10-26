@@ -6,7 +6,7 @@ function itemMatches(item: MediaItem, filter: string): boolean {
   const needle = filter.trim().toLowerCase()
   if (!needle) return true
   const haystack = [
-    item.title, item.provider, item.kind, item.franchise, item.series,
+    item.title, item.provider, item.kind, item.franchise, item.series, item.season, item.episode,
     ...item.tags, ...item.actors,
   ].filter(Boolean).join(' ').toLowerCase()
   return haystack.includes(needle)
