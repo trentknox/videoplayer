@@ -30,7 +30,7 @@ export const onRequestOptions = (): Response => new Response(null, {
 function isPrivateHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '')
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true
-  if (host === '::1' || host.startsWith('fc') || host.startsWith('fd') || /^fe[89ab][0-9a-f:]*$/i.test(host)) return true
+  if (host.includes(':') && (host === '::' || host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('::ffff:') || /^fe[89ab][0-9a-f:]*$/i.test(host))) return true
   const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
   if (!ipv4) return false
   const octets = ipv4.slice(1).map(Number)
@@ -123,7 +123,7 @@ function structuredVideo(html: string, base: URL): StructuredVideo {
       if (!video) continue
       const thumbnail = Array.isArray(video.thumbnailUrl) ? video.thumbnailUrl[0] : video.thumbnailUrl
       return {
-        url: toPublicUrl(textField(video.contentUrl) ?? textField(video.url), base),
+        url: toPublicUrl(textField(video.contentUrl), base),
         iframe: toPublicUrl(textField(video.embedUrl), base),
         title: textField(video.name),
         poster: toPublicUrl(textField(thumbnail), base),
@@ -271,7 +271,7 @@ export const onRequestPost = async ({ request }: AnalyzeContext): Promise<Respon
 
   return respond({
     provider: candidate.url && directMedia.test(candidate.url) ? 'direct' : 'embed',
-    kind: candidate.url && directMedia.test(candidate.url) ? 'video' : 'catalog',
+    kind: embedUrl ? 'video' : 'catalog',
     sourceUrl: target.toString(),
     embedUrl: embedUrl ?? finalUrl.toString(),
     title,
