@@ -4,6 +4,7 @@ web-dist/
 release/
 release-update/
 release-frameless/
+release-final/
 .wrangler/
 *.tsbuildinfo
 .env
