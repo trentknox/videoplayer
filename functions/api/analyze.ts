@@ -166,6 +166,42 @@ function publicCandidate(html: string, base: URL): StructuredVideo {
   }
 }
 
+function discoverListings(html: string, base: URL): Array<{ url: string; title: string; poster?: string }> {
+  const items: Array<{ url: string; title: string; poster?: string }> = []
+  const seen = new Set<string>()
+  const attribute = (tag: string, name: string) => tag.match(new RegExp(`\\b${name}\\s*=\\s*["']([^"']+)["']`, 'i'))?.[1]
+  for (const match of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi)) {
+    const tag = match[1]
+    const content = match[2]
+    const href = toPublicUrl(decodeEntities(attribute(tag, 'href') ?? ''), base)
+    if (!href) continue
+    const url = new URL(href)
+    url.hash = ''
+    if (url.origin !== base.origin || url.pathname === '/' || url.pathname === base.pathname || seen.has(url.href)) continue
+    const image = content.match(/<img\b([^>]*)>/i)?.[1] ?? ''
+    if (!image && !/^\/watch(?:[-_][^/]+)?\/[^/]+/i.test(url.pathname)) continue
+    const title = attribute(tag, 'title') ?? attribute(tag, 'aria-label') ?? attribute(image, 'alt')
+    if (!title || title.trim().length < 2) continue
+    const poster = toPublicUrl(decodeEntities(attribute(image, 'src') ?? attribute(image, 'data-src') ?? ''), base)
+    seen.add(url.href)
+    items.push({ url: url.href, title: decodeEntities(title.trim()).slice(0, 200), poster })
+    if (items.length >= 50) break
+  }
+  return items
+}
+
+function discoverCatalogPage(html: string, base: URL): string | undefined {
+  const anchors = html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi)
+  for (const match of anchors) {
+    const label = match[2].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+    if (!/^(?:go to |visit |browse )?(?:the )?(?:home ?page|catalog(?:ue)?)$/i.test(label)) continue
+    const href = match[1].match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1]
+    const url = toPublicUrl(href && decodeEntities(href), base)
+    if (url && new URL(url).origin === base.origin && url !== base.href) return url
+  }
+  return undefined
+}
+
 async function fetchPublicPage(initial: URL): Promise<{ response: Response; finalUrl: URL }> {
   let current = initial
   for (let redirects = 0; redirects <= 5; redirects += 1) {
@@ -229,6 +265,8 @@ export const onRequestPost = async ({ request }: AnalyzeContext): Promise<Respon
     poster,
     description,
     durationSeconds: 900,
+    listings: discoverListings(html, finalUrl),
+    suggestedCatalogUrl: discoverCatalogPage(html, finalUrl),
     notes: [embedUrl
       ? 'Vivid found a standard public metadata or embedded-media reference. It saves the original source; it does not proxy or copy it.'
       : 'No standard public media reference was exposed, so Vivid saved the page as a source record.'],

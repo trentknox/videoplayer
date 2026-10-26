@@ -131,7 +131,7 @@ export async function analyzePublicPage(rawUrl: string): Promise<AnalysisResult>
     return {
       provider: result.provider as Provider, kind: result.kind, sourceUrl: result.sourceUrl, embedUrl: result.embedUrl,
       externalId: result.externalId, title: result.title, poster: result.poster, description: result.description,
-      durationSeconds: result.durationSeconds ?? 900, notes: result.notes,
+      durationSeconds: result.durationSeconds ?? 900, notes: result.notes, listings: result.listings, suggestedCatalogUrl: result.suggestedCatalogUrl,
     }
   } catch {
     // A browser can inspect a page only when that page permits cross-origin reads.
@@ -142,18 +142,36 @@ export async function analyzePublicPage(rawUrl: string): Promise<AnalysisResult>
       const html = (await response.text()).slice(0, 350_000)
       const document = new DOMParser().parseFromString(html, 'text/html')
       const meta = (name: string): string | undefined => document.querySelector(`meta[property="${name}"],meta[name="${name}"]`)?.getAttribute('content') || undefined
+      const pageUrl = new URL(response.url || fallback.sourceUrl)
+      const listings: NonNullable<AnalysisResult['listings']> = []
+      const seen = new Set<string>()
+      for (const link of Array.from(document.querySelectorAll?.('a[href]') ?? [])) {
+        try {
+          const url = new URL(link.getAttribute('href') || '', pageUrl)
+          url.hash = ''
+          const image = link.querySelector('img')
+          if (!image && !/^\/watch(?:[-_][^/]+)?\/[^/]+/i.test(url.pathname)) continue
+          const title = link.getAttribute('title') || link.getAttribute('aria-label') || image?.getAttribute('alt')
+          if (url.origin !== pageUrl.origin || url.pathname === '/' || url.pathname === pageUrl.pathname || !title || title.trim().length < 2 || seen.has(url.href)) continue
+          seen.add(url.href)
+          listings.push({ url: url.href, title: title.trim().slice(0, 200) })
+          if (listings.length >= 50) break
+        } catch { /* Ignore malformed links. */ }
+      }
       const exposed = meta('og:video:secure_url') ?? meta('og:video:url') ?? meta('og:video') ?? meta('twitter:player:stream')
         ?? document.querySelector('video[src],video source[src]')?.getAttribute('src')
         ?? meta('twitter:player') ?? document.querySelector('iframe[src]')?.getAttribute('src')
       const resolved = exposed ? new URL(exposed, response.url || fallback.sourceUrl) : undefined
-      if (!resolved || !['http:', 'https:'].includes(resolved.protocol)) throw new Error('No public media reference')
+      if (!resolved || !['http:', 'https:'].includes(resolved.protocol)) {
+        return { ...fallback, title: meta('og:title') || document.title || fallback.title, listings, notes: ['The page was read, but no playable media reference was found.'] }
+      }
       const candidate = analyzeUrl(resolved.href)
       return {
         ...candidate,
         sourceUrl: fallback.sourceUrl,
         title: meta('og:title') || document.title || candidate.title,
         description: meta('og:description') || undefined,
-        notes: ['Found a public media reference on a page that permits browser access. Playback depends on the source provider.'],
+        listings, notes: ['Found a public media reference on a page that permits browser access. Playback depends on the source provider.'],
       }
     } catch {
       return { ...fallback, notes: ['Page analysis is unavailable here. Saved the page link without discovering its media; the site may block embedding.'] }

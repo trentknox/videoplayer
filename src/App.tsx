@@ -184,6 +184,43 @@ export default function App() {
     }
   }
 
+  async function importPageListings(): Promise<void> {
+    if (!library || !draft.url.trim()) { setNotice('Enter a website URL first.'); return }
+    setImporting(true)
+    setNotice('Looking for titles on this page…')
+    try {
+      let page = await analyzePublicPage(draft.url)
+      if (!page.listings?.length && page.suggestedCatalogUrl) page = await analyzePublicPage(page.suggestedCatalogUrl)
+      const known = new Set(library.media.map((item) => item.sourceUrl))
+      const listings = (page.listings ?? []).filter((item) => !known.has(item.url)).slice(0, 25)
+      if (!listings.length) {
+        setNotice('No new titled links were found on this page. Some sites require an API or render their catalog in JavaScript.')
+        return
+      }
+      const entries: MediaItem[] = []
+      for (let offset = 0; offset < listings.length; offset += 3) {
+        const batch = listings.slice(offset, offset + 3)
+        const analyzed = await Promise.all(batch.map(async (listing) => {
+          try {
+            const result = await analyzePublicPage(listing.url)
+            return toMediaItem({ ...result, title: result.title === new URL(listing.url).hostname ? listing.title : result.title, poster: result.poster ?? listing.poster }, { ...blankDraft, tags: draft.tags }, true)
+          } catch {
+            return toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster }, { ...blankDraft, tags: draft.tags }, true)
+          }
+        }))
+        entries.push(...analyzed)
+      }
+      updateLibrary((current) => {
+        const existing = new Set(current.media.map((item) => item.sourceUrl))
+        return { ...current, media: [...entries.filter((item) => !existing.has(item.sourceUrl)), ...current.media] }
+      })
+      setView('library')
+      setNotice(`Added ${entries.length} entries from this page. Some may be links rather than playable videos; scan additional pages separately.`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not inspect the page.')
+    } finally { setImporting(false) }
+  }
+
   function removeMedia(id: string): void {
     updateLibrary((current) => ({
       ...current,
@@ -322,6 +359,7 @@ export default function App() {
               <label>Runtime in minutes <span>optional; used for channel scheduling</span><input type="number" min="1" max="1440" placeholder="15" value={draft.durationMinutes} onChange={(event) => updateDraft('durationMinutes', event.target.value)} /></label>
               <label className="checkbox-row"><input type="checkbox" checked={pageAnalysis} onChange={(event) => setPageAnalysis(event.target.checked)} /> Analyze permitted public-page metadata</label>
               <button className="primary-button" disabled={importing}>{importing ? 'Analyzing…' : 'Analyze & import'}</button>
+              <button type="button" className="secondary-button" disabled={importing} onClick={importPageListings}>Import titles listed on this page</button>
             </form>
             <p className="fine-print">Vivid saves original source URLs. It does not copy, proxy, DRM-bypass, or rebroadcast media.</p>
           </aside>

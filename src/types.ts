@@ -76,4 +76,6 @@ export interface AnalysisResult {
   description?: string
   durationSeconds?: number
   notes?: string[]
+  listings?: Array<{ url: string; title: string; poster?: string }>
+  suggestedCatalogUrl?: string
 }
