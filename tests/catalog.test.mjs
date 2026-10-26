@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { onRequestPost } from '../functions/api/analyze.ts'
+import { onRequestPost, onRequestOptions } from '../functions/api/analyze.ts'
+
+test('desktop apps can preflight catalog analysis without sending credentials', () => {
+  const response = onRequestOptions()
+  assert.equal(response.status, 204)
+  assert.equal(response.headers.get('access-control-allow-origin'), '*')
+  assert.equal(response.headers.get('access-control-allow-credentials'), null)
+})
 
 test('a public listing page discovers distinct same-site titled entries', async () => {
   const originalFetch = globalThis.fetch

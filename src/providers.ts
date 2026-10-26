@@ -122,7 +122,8 @@ export async function analyzePublicPage(rawUrl: string): Promise<AnalysisResult>
   const fallback = analyzeUrl(rawUrl)
   if (fallback.provider !== 'embed') return fallback
   try {
-    const response = await fetch('/api/analyze', {
+    const endpoint = window.location.protocol === 'file:' ? 'https://vivid-media-player.pages.dev/api/analyze' : '/api/analyze'
+    const response = await fetch(endpoint, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: rawUrl }),
     })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)

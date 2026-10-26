@@ -362,6 +362,7 @@ export default function App() {
               <button type="button" className="secondary-button" disabled={importing} onClick={importPageListings}>Import titles listed on this page</button>
             </form>
             <p className="fine-print">Vivid saves original source URLs. It does not copy, proxy, DRM-bypass, or rebroadcast media.</p>
+            <p className="fine-print">When page analysis is enabled, the URL is sent to the Vivid analysis service.</p>
           </aside>
         </section>
 

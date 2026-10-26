@@ -10,9 +10,22 @@ function respond(body: unknown, status = 200): Response {
       'content-type': 'application/json; charset=utf-8',
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'POST, OPTIONS',
+      'access-control-allow-headers': 'Content-Type',
     },
   })
 }
+
+export const onRequestOptions = (): Response => new Response(null, {
+  status: 204,
+  headers: {
+    'access-control-allow-origin': '*',
+    'access-control-allow-methods': 'POST, OPTIONS',
+    'access-control-allow-headers': 'Content-Type',
+    'access-control-max-age': '600',
+  },
+})
 
 function isPrivateHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '')
