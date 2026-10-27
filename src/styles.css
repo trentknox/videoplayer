@@ -150,3 +150,29 @@ input:focus { border-color: #9b90ff; box-shadow: 0 0 0 3px rgba(155,144,255,.14)
 
 .history-entry { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 0; border-bottom: 1px solid rgba(255,255,255,.1); }
 .history-entry p { margin: 4px 0 0; color: #aeb5d0; font-size: .85rem; }
+
+.home-search { width: min(100%, 1100px); margin: 20px 0 28px; }
+.home-search input { min-height: 58px; font-size: 1.1rem; padding: 14px 18px; }
+.ai-dialog-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(0, 0, 0, .75); }
+.ai-dialog { width: min(760px, 100%); max-height: min(80vh, 800px); overflow: auto; border: 1px solid #555189; border-radius: 18px; padding: 24px; background: #111527; box-shadow: 0 20px 70px #000a; }
+.ai-dialog-heading { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.ai-dialog-heading h2 { margin: 6px 0; }
+.ai-dialog-query { color: #aebbd3; overflow-wrap: anywhere; }
+.ai-result-row { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; margin: 8px 0; padding: 10px; border: 1px solid #39405c; border-radius: 10px; background: #1b2035; color: white; cursor: pointer; }
+.ai-result-row img { width: 50px; height: 60px; object-fit: cover; border-radius: 5px; }
+.ai-result-row span:nth-last-child(2) { flex: 1; }
+@media (max-width: 720px) { .home-search { flex-wrap: wrap; } .home-search input { flex: 1 0 100%; } .ai-dialog { padding: 18px; } }
+
+.ai-preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; margin: 16px 0; }
+.ai-preview-card { min-width: 0; text-align: left; border: 1px solid #39405c; border-radius: 10px; background: #1b2035; color: white; overflow: hidden; padding: 0 0 10px; cursor: pointer; }
+.ai-preview-card img, .ai-poster-placeholder { display: grid; place-items: center; width: 100%; aspect-ratio: 2 / 3; object-fit: cover; background: #292d4d; }
+.ai-preview-card span { display: block; padding: 9px 9px 0; overflow-wrap: anywhere; }
+.ai-preview-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.ai-suggestion { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #39405c; }
+.ai-suggestion p { color: #aebbd3; margin: 5px 0; font-size: .85rem; }
+
+.hero-grid.theater-mode { grid-template-columns: minmax(0, 1fr); }
+.player-toolbar { display: flex; justify-content: flex-end; gap: 4px; background: #232540; padding: 4px 8px; }
+.player-toolbar button { border: 0; background: transparent; color: white; padding: 5px 8px; cursor: pointer; }
+.player-toolbar button:hover { background: #393c60; border-radius: 5px; }

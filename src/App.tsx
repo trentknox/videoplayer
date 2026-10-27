@@ -104,6 +104,7 @@ export default function App() {
   const [channelSlotStart, setChannelSlotStart] = useState<string>()
   const [view, setView] = useState<View>('home')
   const [minimizedPlayer, setMinimizedPlayer] = useState(false)
+  const [theaterMode, setTheaterMode] = useState(false)
   const [draft, setDraft] = useState<ImportDraft>(blankDraft)
   const [pageAnalysis, setPageAnalysis] = useState(true)
   const [importing, setImporting] = useState(false)
@@ -119,6 +120,8 @@ export default function App() {
   const [gatewayPassword, setGatewayPassword] = useState('')
   const [aiBusy, setAiBusy] = useState(false)
   const [aiResult, setAiResult] = useState<AiSearchResult>()
+  const [aiDialogOpen, setAiDialogOpen] = useState(false)
+  const [aiFeedback, setAiFeedback] = useState('')
   const [filters, setFilters] = useState<LibraryFilters>(defaultFilters)
   const [playlistName, setPlaylistName] = useState('')
   const [deletedPlaylist, setDeletedPlaylist] = useState<{ playlist: Playlist; index: number }>()
@@ -381,10 +384,12 @@ export default function App() {
 
   async function askAi(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
-    if (!aiSession) { setNotice('Connect your private AI gateway in Settings to use AI search.'); setView('settings'); return }
     if (!library || !homeSearch.trim()) return
-    setAiBusy(true)
+    setAiDialogOpen(true)
     setAiResult(undefined)
+    if (!aiSession) { setAiFeedback('AI search is not connected. Connect your private AI gateway in Settings to search and create channels.'); return }
+    setAiFeedback('Preparing your search…')
+    setAiBusy(true)
     try {
       let media = library.media
       let sourceStatus = ''
@@ -395,7 +400,7 @@ export default function App() {
           setImporting(true)
           importingRef.current = true
           try {
-            setNotice('Checking saved sources for more titles…')
+            setAiFeedback('Checking saved sources for more titles…')
             const discovered = await discoverForSearch(library.sources ?? [], media.map((item) => item.sourceUrl), library.catalogJobs ?? {}, analyzePublicPage)
             const entries = discovered.listings.map((listing) => toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster }, { ...blankDraft, url: listing.url, season: listing.season?.toString() ?? '', episode: listing.episode?.toString() ?? '' }, true))
             media = [...entries, ...media]
@@ -413,17 +418,31 @@ export default function App() {
           } finally { sourceSyncLock.current = false; importingRef.current = false; setImporting(false) }
         }
       }
+      setAiFeedback('Finding the best matches…')
       const result = await searchWithAi(aiSession, homeSearch, media)
       setAiResult(result)
-      if (result.ids.length && result.action !== 'search') {
-        const playlist: Playlist = { id: makeId('playlist'), name: result.name, mediaIds: result.ids, createdAt: new Date().toISOString() }
-        const channel: Channel | undefined = result.action === 'channel' ? { id: makeId('channel'), name: result.name, description: `Loops the ${result.name} playlist in order.`, filter: '', accent: accents[library.channels.length % accents.length], anchor: new Date().toISOString(), durationHours: 24, playlistId: playlist.id } : undefined
-        updateLibrary((current) => ({ ...current, playlists: [playlist, ...current.playlists], channels: channel ? [channel, ...current.channels] : current.channels }))
-        if (channel) setClock(new Date())
-        setNotice(`Created ${channel ? 'channel' : 'playlist'} “${result.name}” with ${result.ids.length} titles.${sourceStatus}`)
-      } else setNotice((result.ids.length ? `Found ${result.ids.length} titles.` : 'AI found no matching titles in the items it examined.') + sourceStatus)
-    } catch (error) { setNotice(error instanceof Error ? error.message : 'AI search failed.') }
+      setAiFeedback((result.ids.length ? `Found ${result.ids.length} titles. Review the preview below.` : 'AI found no matching titles in the items it examined.') + sourceStatus)
+    } catch (error) { setAiFeedback(error instanceof Error ? error.message : 'AI search failed.') }
     finally { setAiBusy(false) }
+  }
+
+  function saveAiPreview(startChannel: boolean, suggestion?: { name: string; ids: string[] }): void {
+    if (!library || !aiResult?.ids.length) return
+    const mediaIds = (suggestion?.ids ?? aiResult.ids).filter((id) => library.media.some((item) => item.id === id))
+    if (!mediaIds.length) { setAiFeedback('These titles are no longer in the library. Search again.'); return }
+    const playlist: Playlist = { id: makeId('playlist'), name: suggestion?.name ?? aiResult.name, mediaIds, createdAt: new Date().toISOString() }
+    const channel: Channel | undefined = startChannel ? { id: makeId('channel'), name: playlist.name, description: `Loops the ${playlist.name} playlist in order.`, filter: '', accent: accents[library.channels.length % accents.length], anchor: new Date().toISOString(), durationHours: 24, playlistId: playlist.id } : undefined
+    updateLibrary((current) => ({ ...current, playlists: [playlist, ...current.playlists], channels: channel ? [channel, ...current.channels] : current.channels }))
+    setAiDialogOpen(false)
+    if (channel) {
+      setClock(new Date())
+      setActivePlaylistId(undefined)
+      setActiveId(mediaIds[0])
+      setActiveChannelId(channel.id)
+      setView('home')
+      window.requestAnimationFrame(() => playerPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+      setNotice(`Created ${playlist.name} and started its channel.`)
+    } else { setView('playlists'); setNotice(`Saved playlist ${playlist.name}.`) }
   }
 
   function addSource(event: FormEvent<HTMLFormElement>): void {
@@ -598,16 +617,24 @@ export default function App() {
 
       <>
         <section className="content-section home-gallery" hidden={view !== 'home'}>
-          <div className="section-heading"><div><span className="section-eyebrow">YOUR MEDIA</span><h1>Find something to watch</h1><p>Browse your library, or search by title, actor, genre, or series.</p></div>
+          <div className="section-heading"><div><span className="section-eyebrow">YOUR MEDIA</span><h1>Find something to watch</h1><p>Describe what you want, or search your library by title, actor, genre, or series.</p></div></div>
             <form className="home-search" onSubmit={askAi}><input aria-label="Search your library" value={homeSearch} onChange={(event) => setHomeSearch(event.target.value)} placeholder="Ask for a movie, playlist, or channel…" /><button className="primary-button" disabled={aiBusy}>{aiBusy ? 'Thinking…' : 'Ask AI'}</button><button type="button" className="secondary-button" onClick={() => { setSearch(homeSearch); setView('library') }}>Search library</button></form>
-          </div>
-          {aiResult && <section aria-label="AI search results"><h2>{aiResult.name}</h2><p>{aiResult.ids.length} matches · examined {aiResult.examined} of {aiResult.total} library titles{aiResult.examined < aiResult.total ? ' (results may be incomplete)' : ''}</p><MediaGrid media={aiResult.ids.flatMap((id) => { const item = library.media.find((entry) => entry.id === id); return item ? [item] : [] })} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} /></section>}
+          {aiDialogOpen && <div className="ai-dialog-backdrop" onClick={() => setAiDialogOpen(false)}><section className="ai-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-dialog-title" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === 'Escape') setAiDialogOpen(false) }}>
+            <div className="ai-dialog-heading"><div><span className="section-eyebrow">AI SEARCH</span><h2 id="ai-dialog-title">{aiResult?.name ?? 'Your request'}</h2></div><button className="secondary-button" aria-label="Close search results" autoFocus onClick={() => setAiDialogOpen(false)}>×</button></div>
+            <p className="ai-dialog-query">{homeSearch}</p><p role="status">{aiFeedback}</p>
+            {!aiSession && <button className="primary-button" onClick={() => { setAiDialogOpen(false); setView('settings') }}>Connect AI in Settings</button>}
+            {aiResult && <section aria-label="AI search results"><p>{aiResult.ids.length} matches · examined {aiResult.examined} of {aiResult.total} library titles{aiResult.examined < aiResult.total ? ' (results may be incomplete)' : ''}</p>
+              <div className="ai-preview-grid">{aiResult.ids.map((id) => { const item = library.media.find((entry) => entry.id === id); return item ? <button className="ai-preview-card" key={id} onClick={() => { setAiDialogOpen(false); playFromLibrary(id) }}>{item.poster ? <img src={item.poster} alt="" /> : <div className="ai-poster-placeholder">▶</div>}<span>{item.title}</span></button> : null })}</div>
+              {aiResult.suggestions.length > 0 && <section className="ai-suggestions"><h3>Suggested channels</h3>{aiResult.suggestions.map((suggestion) => <div className="ai-suggestion" key={suggestion.name}><div><strong>{suggestion.name}</strong><p>{suggestion.ids.map((id) => library.media.find((item) => item.id === id)?.title).filter(Boolean).join(' · ')}</p></div><button className="secondary-button" onClick={() => saveAiPreview(true, suggestion)}>Start {suggestion.name}</button></div>)}</section>}
+              {aiResult.ids.length > 0 && <div className="ai-preview-actions"><button className="primary-button" onClick={() => saveAiPreview(true)}>Create playlist &amp; start channel</button><button className="secondary-button" onClick={() => saveAiPreview(false)}>Save playlist</button></div>}
+            </section>}
+          </section></div>}
           <h2>Explore your library</h2>
           <MediaGrid media={homeGallery} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} />
         </section>
-        <section className={`hero-grid ${view !== 'home' || minimizedPlayer ? 'mini-player-grid' : ''}`} hidden={view !== 'home' && !active}>
+        <section className={`hero-grid ${view !== 'home' || minimizedPlayer ? 'mini-player-grid' : theaterMode ? 'theater-mode' : ''}`} hidden={view !== 'home' && !active}>
           <div className="player-panel" ref={playerPanel}>
-            {view !== 'home' || minimizedPlayer ? <button className="mini-player-return" onClick={() => { setMinimizedPlayer(false); setView('home') }}>Return to player ↗</button> : <button className="mini-player-return" onClick={() => setMinimizedPlayer(true)}>Mini-player ↘</button>}
+            {view !== 'home' || minimizedPlayer ? <button className="mini-player-return" onClick={() => { setMinimizedPlayer(false); setView('home') }}>Return to player ↗</button> : <div className="player-toolbar"><button onClick={() => setTheaterMode((value) => !value)} aria-pressed={theaterMode}>{theaterMode ? 'Exit theater mode' : 'Theater mode'}</button><button onClick={() => setMinimizedPlayer(true)}>Mini-player ↘</button></div>}
             <div className="section-eyebrow">NOW PLAYING</div>
             <PlayerSurface key={activeChannelId ? channelSlotId : activeId} item={activePlayer} onStarted={recordPlayback} onEnded={activePlaylist ? nextInPlaylist : undefined} autoPlay={Boolean(activePlaylist || activeChannelId)} slotStart={activeChannelId ? channelSlotStart : undefined} />
             <div className="now-playing-meta">
@@ -620,7 +647,7 @@ export default function App() {
               {active && <div>{activePlaylist && <button className="secondary-button" onClick={nextInPlaylist}>Next in {activePlaylist.name} →</button>} <button className="secondary-button" onClick={() => addToWatchLater(active.id)}>＋ Watch later</button></div>}
             </div>
           </div>
-          <aside className="import-card" hidden={view !== 'home' || minimizedPlayer}>
+          <aside className="import-card" hidden={view !== 'home' || minimizedPlayer || theaterMode}>
             <div className="section-eyebrow">UNIVERSAL IMPORTER</div>
             <h2>Paste a source. Build your world.</h2>
             <p>Single videos, playlists, channels, permitted public pages, direct streams, Plex sources, YouTube, Twitch, and Cloudflare Stream.</p>

@@ -17,6 +17,12 @@ try {
     await element.play()
   })
   const original = await video.elementHandle()
+  const normalWidth = await video.evaluate((v) => v.getBoundingClientRect().width)
+  await page.getByRole('button', { name: 'Theater mode', exact: true }).click()
+  assert.ok(await video.evaluate((v) => v.getBoundingClientRect().width) > normalWidth)
+  assert.equal(await page.evaluate(() => document.fullscreenElement), null)
+  assert.equal(await original.evaluate((v) => v.isConnected && !v.paused), true)
+  await page.getByRole('button', { name: 'Exit theater mode' }).click()
   await page.getByRole('button', { name: 'Mini-player' }).click()
   assert.equal(await page.locator('.mini-player-grid').count(), 1)
   assert.equal(await original.evaluate((v) => v.isConnected && !v.paused), true)
@@ -35,6 +41,6 @@ try {
   await page.locator('.history-view').getByText('Big Buck Bunny', { exact: true }).waitFor()
   await page.getByRole('button', { name: 'Clear history' }).click()
   await page.getByText('Your recently played videos will appear here.').waitFor()
-  console.log('Playback survives mini-player navigation; history persists and clears')
+  console.log('Theater and mini-player keep playback running; history persists and clears')
 } finally { await context.close(); await browser.close() }
 
