@@ -176,3 +176,6 @@ input:focus { border-color: #9b90ff; box-shadow: 0 0 0 3px rgba(155,144,255,.14)
 .player-toolbar { display: flex; justify-content: flex-end; gap: 4px; background: #232540; padding: 4px 8px; }
 .player-toolbar button { border: 0; background: transparent; color: white; padding: 5px 8px; cursor: pointer; }
 .player-toolbar button:hover { background: #393c60; border-radius: 5px; }
+
+.media-card.portrait-poster .card-play { aspect-ratio: 2 / 3; }
+.ai-preview-card .poster-fallback { width: 100%; aspect-ratio: 2 / 3; height: auto; }

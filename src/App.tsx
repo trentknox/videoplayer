@@ -10,6 +10,7 @@ import { dueSource } from './sources'
 import { defaultFilters, filterLibrary } from './filters'
 import { adjacentChannel } from './channelNavigation'
 import { startUpdateMonitor } from './updateMonitor'
+import { posterSources } from './posters'
 import { aiLogin, aiLogout, searchWithAi } from './aiSearch'
 import { discoverForSearch } from './searchSources'
 import type { AiSession, AiSearchResult } from './aiSearch'
@@ -624,7 +625,7 @@ export default function App() {
             <p className="ai-dialog-query">{homeSearch}</p><p role="status">{aiFeedback}</p>
             {!aiSession && <button className="primary-button" onClick={() => { setAiDialogOpen(false); setView('settings') }}>Connect AI in Settings</button>}
             {aiResult && <section aria-label="AI search results"><p>{aiResult.ids.length} matches · examined {aiResult.examined} of {aiResult.total} library titles{aiResult.examined < aiResult.total ? ' (results may be incomplete)' : ''}</p>
-              <div className="ai-preview-grid">{aiResult.ids.map((id) => { const item = library.media.find((entry) => entry.id === id); return item ? <button className="ai-preview-card" key={id} onClick={() => { setAiDialogOpen(false); playFromLibrary(id) }}>{item.poster ? <img src={item.poster} alt="" /> : <div className="ai-poster-placeholder">▶</div>}<span>{item.title}</span></button> : null })}</div>
+              <div className="ai-preview-grid">{aiResult.ids.map((id) => { const item = library.media.find((entry) => entry.id === id); return item ? <button className="ai-preview-card" key={id} onClick={() => { setAiDialogOpen(false); playFromLibrary(id) }}><PosterImage item={item} /><span>{item.title}</span></button> : null })}</div>
               {aiResult.suggestions.length > 0 && <section className="ai-suggestions"><h3>Suggested channels</h3>{aiResult.suggestions.map((suggestion) => <div className="ai-suggestion" key={suggestion.name}><div><strong>{suggestion.name}</strong><p>{suggestion.ids.map((id) => library.media.find((item) => item.id === id)?.title).filter(Boolean).join(' · ')}</p></div><button className="secondary-button" onClick={() => saveAiPreview(true, suggestion)}>Start {suggestion.name}</button></div>)}</section>}
               {aiResult.ids.length > 0 && <div className="ai-preview-actions"><button className="primary-button" onClick={() => saveAiPreview(true)}>Create playlist &amp; start channel</button><button className="secondary-button" onClick={() => saveAiPreview(false)}>Save playlist</button></div>}
             </section>}
@@ -785,13 +786,20 @@ interface MediaGridProps {
 
 function MediaGrid({ media, activeId, onPlay, onRemove }: MediaGridProps) {
   if (!media.length) return <div className="empty-state">Nothing here yet. Import a source to start building your collection.</div>
-  return <div className="media-grid">{media.map((item) => <article key={item.id} className={`media-card ${item.id === activeId ? 'is-active' : ''}`}>
+  return <div className="media-grid">{media.map((item) => <article key={item.id} className={`media-card ${item.id === activeId ? 'is-active' : ''} ${item.contentType === 'movie' || item.contentType === 'series' ? 'portrait-poster' : ''}`}>
     <button className="card-play" onClick={() => onPlay(item.id)} aria-label={`Play ${item.title}`}>
-      {item.poster ? <img src={item.poster} alt="" /> : <div className={`poster-fallback provider-${item.provider}`}>{sourceGlyph(item.provider)}</div>}
+      <PosterImage item={item} />
       <span className="play-circle">▶</span>
     </button>
     <div className="card-meta"><div><span className="provider-badge">{sourceGlyph(item.provider)} {providerLabel(item.provider)}</span><h3>{item.title}</h3><p>{item.franchise || item.series || item.tags.slice(0, 2).join(' · ') || item.kind}</p></div><button className="remove-button" onClick={() => onRemove(item.id)} aria-label={`Remove ${item.title}`}>×</button></div>
   </article>)}</div>
+}
+
+function PosterImage({ item }: { item: MediaItem }) {
+  const candidates = useMemo(() => item.poster ? posterSources(item.poster, item.provider, item.externalId) : [], [item.poster, item.provider, item.externalId])
+  const [index, setIndex] = useState(0)
+  useEffect(() => { setIndex(0) }, [candidates])
+  return candidates[index] ? <img src={candidates[index]} alt="" loading="lazy" onError={() => setIndex((current) => current + 1)} /> : <div className={`poster-fallback provider-${item.provider}`}>{sourceGlyph(item.provider)}</div>
 }
 
 function PlaylistCard({ playlist, media, onPlay, onChange, onMove, onDelete, onCreateChannel, onRename }: { playlist: Playlist; media: MediaItem[]; onPlay: (id: string) => void; onChange: (id: string, add: boolean) => void; onMove: (id: string, direction: -1 | 1) => void; onDelete: () => void; onCreateChannel: () => void; onRename: (name: string) => void }) {

@@ -256,7 +256,7 @@ async function discoverSitePlayers(html: string, base: URL): Promise<Array<{ nam
 function discoverListings(html: string, base: URL): Array<{ url: string; title: string; poster?: string; season?: number; episode?: number }> {
   const items: Array<{ url: string; title: string; poster?: string; season?: number; episode?: number }> = []
   const seen = new Set<string>()
-  const attribute = (tag: string, name: string) => tag.match(new RegExp(`\\b${name}\\s*=\\s*["']([^"']+)["']`, 'i'))?.[1]
+  const attribute = (tag: string, name: string) => tag.match(new RegExp(`(?:^|\\s)${name}\\s*=\\s*["']([^"']+)["']`, 'i'))?.[1]
   for (const match of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi)) {
     const tag = match[1]
     const content = match[2]
@@ -270,7 +270,14 @@ function discoverListings(html: string, base: URL): Array<{ url: string; title: 
     if (!image && !episodeMatch && !/^\/watch(?:[-_][^/]+)?\/[^/]+/i.test(url.pathname)) continue
     const title = attribute(tag, 'title') ?? attribute(tag, 'aria-label') ?? attribute(image, 'alt')
     if (!title || title.trim().length < 2) continue
-    const poster = toPublicUrl(decodeEntities(attribute(image, 'src') ?? attribute(image, 'data-src') ?? ''), base)
+    const srcset = [attribute(image, 'data-srcset'), attribute(image, 'srcset')].filter(Boolean).flatMap((value) => value!.split(',')).map((candidate) => {
+      const parts = candidate.trim().split(/\s+/)
+      const descriptor = parts[1] ?? ''
+      const amount = Number.parseFloat(descriptor)
+      const rank = Number.isFinite(amount) ? (descriptor.endsWith('x') ? amount * 1000 : amount) : 0
+      return { url: toPublicUrl(decodeEntities(parts[0]), base), rank }
+    }).filter((candidate): candidate is { url: string; rank: number } => Boolean(candidate.url)).sort((a, b) => b.rank - a.rank)
+    const poster = srcset[0]?.url ?? ['data-original', 'data-lazy-src', 'data-src', 'src'].map((name) => toPublicUrl(decodeEntities(attribute(image, name) ?? ''), base)).find(Boolean)
     seen.add(url.href)
     items.push({ url: url.href, title: decodeEntities(title.trim()).slice(0, 200), poster, season: episodeMatch ? Number(episodeMatch[1]) : undefined, episode: episodeMatch ? Number(episodeMatch[2]) : undefined })
   }

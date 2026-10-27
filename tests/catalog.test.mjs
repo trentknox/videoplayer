@@ -154,3 +154,13 @@ test('IPv4-mapped IPv6 addresses are rejected before fetching', async () => {
     assert.equal((await onRequestPost({ request })).status, 400)
   } finally { globalThis.fetch = originalFetch }
 })
+
+test('catalog thumbnails prefer the highest public srcset and lazy image sources', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(`<a href="/film/one" title="One"><img src="/placeholder.gif" data-src="/lazy.jpg" data-srcset="/small.jpg 200w, /large.jpg 1000w, http://127.0.0.1/private 3000w"></a><a href="/film/two" title="Two"><img src="/placeholder.gif" data-original="/original.jpg"></a>`, { headers: { 'content-type': 'text/html' } })
+  try {
+    const request = new Request('https://app.example/api/analyze', { method: 'POST', body: JSON.stringify({ url: 'https://catalog.example/' }) })
+    const result = await (await onRequestPost({ request })).json()
+    assert.deepEqual(result.listings.map((entry) => entry.poster), ['https://catalog.example/large.jpg', 'https://catalog.example/original.jpg'])
+  } finally { globalThis.fetch = originalFetch }
+})
