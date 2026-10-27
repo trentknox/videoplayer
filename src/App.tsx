@@ -94,6 +94,7 @@ export default function App() {
   const [library, setLibrary] = useState<LibraryState | null>(null)
   const [activeId, setActiveId] = useState<string>()
   const [selectedPlayer, setSelectedPlayer] = useState('')
+  const [resolveAttempt, setResolveAttempt] = useState(0)
   const [activePlaylistId, setActivePlaylistId] = useState<string>()
   const [activeChannelId, setActiveChannelId] = useState<string>()
   const [channelSlotId, setChannelSlotId] = useState<string>()
@@ -145,6 +146,24 @@ export default function App() {
     const option = active?.playerOptions?.find((entry) => entry.url === selectedPlayer)
     return active && option ? { ...active, embedUrl: option.url } : active
   }, [active, selectedPlayer])
+  // Resolve catalog pages on every selection path, including queue and channel transitions.
+  useEffect(() => {
+    if (!active) return
+    let needsRefresh = active.kind === 'catalog'
+    try { needsRefresh ||= new URL(active.sourceUrl).hostname.toLowerCase() === '1movies.stream' } catch { /* Invalid saved URLs stay as links. */ }
+    if (!needsRefresh) return
+    let cancelled = false
+    const id = active.id
+    setNotice('Checking for an available player…')
+    void analyzePublicPage(active.sourceUrl).then((result) => {
+      if (cancelled) return
+      if (result.kind !== 'video' || result.analysisUnavailable) { setNotice('No player was found for this title.'); return }
+      updateLibrary((current) => ({ ...current, media: current.media.map((entry) => entry.id === id
+        ? { ...entry, provider: result.provider, kind: result.kind, embedUrl: result.embedUrl, playerOptions: result.playerOptions, contentType: result.contentType ?? entry.contentType, contentRating: result.contentRating ?? entry.contentRating, genres: result.genres?.length ? result.genres : entry.genres, countries: result.countries?.length ? result.countries : entry.countries, year: result.year ?? entry.year, rating: result.rating ?? entry.rating, budgetUsd: result.budgetUsd ?? entry.budgetUsd, revenueUsd: result.revenueUsd ?? entry.revenueUsd, actors: [...new Set([...entry.actors, ...(result.actors ?? [])])] } : entry) }))
+      setNotice('Player refreshed. Playback depends on the provider.')
+    }).catch(() => { if (!cancelled) setNotice('Could not refresh this player.') })
+    return () => { cancelled = true }
+  }, [activeId, activePlaylistId, activeChannelId, resolveAttempt])
   useEffect(() => { setSelectedPlayer('') }, [activeId])
   useEffect(() => {
     if (!library || importing || sourceSyncLock.current) return
@@ -351,23 +370,13 @@ export default function App() {
   }
 
   function playFromLibrary(id: string): void {
-    const item = library?.media.find((entry) => entry.id === id)
+    setResolveAttempt((attempt) => attempt + 1)
     setActiveChannelId(undefined)
     setActivePlaylistId(undefined)
     setActiveId(id)
     setView('home')
     window.requestAnimationFrame(() => playerPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
-    if (!item) return
-    let needsRefresh = item.kind === 'catalog'
-    try { needsRefresh ||= new URL(item.sourceUrl).hostname.toLowerCase() === '1movies.stream' } catch { /* Invalid links remain saved. */ }
-    if (!needsRefresh) return
-    setNotice('Checking for an available player…')
-    void analyzePublicPage(item.sourceUrl).then((result) => {
-      if (result.kind !== 'video' || result.analysisUnavailable) { setNotice('No player was found for this title.'); return }
-      updateLibrary((current) => ({ ...current, media: current.media.map((entry) => entry.id === id
-        ? { ...entry, provider: result.provider, kind: result.kind, embedUrl: result.embedUrl, playerOptions: result.playerOptions, contentType: result.contentType ?? entry.contentType, contentRating: result.contentRating ?? entry.contentRating, genres: result.genres?.length ? result.genres : entry.genres, countries: result.countries?.length ? result.countries : entry.countries, year: result.year ?? entry.year, rating: result.rating ?? entry.rating, budgetUsd: result.budgetUsd ?? entry.budgetUsd, revenueUsd: result.revenueUsd ?? entry.revenueUsd, actors: [...new Set([...entry.actors, ...(result.actors ?? [])])] } : entry) }))
-      setNotice('Player refreshed. Playback depends on the provider.')
-    }).catch(() => setNotice('Could not refresh this player.'))
+
   }
 
   function addToWatchLater(id: string): void {
