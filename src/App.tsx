@@ -9,6 +9,7 @@ import { movePlaylistItem } from './playlist'
 import { dueSource } from './sources'
 import { defaultFilters, filterLibrary } from './filters'
 import { adjacentChannel } from './channelNavigation'
+import { startUpdateMonitor } from './updateMonitor'
 import type { LibraryFilters } from './filters'
 import { formatClock, makeSchedule, nowPlaying } from './scheduler'
 import type { AnalysisResult, Channel, ImportDraft, LibraryState, MediaItem, Playlist } from './types'
@@ -104,6 +105,7 @@ export default function App() {
   const [scanningCatalog, setScanningCatalog] = useState(false)
   const [catalogSections, setCatalogSections] = useState<Array<{ url: string; title: string }>>([])
   const [notice, setNotice] = useState('')
+  const [updateAvailable, setUpdateAvailable] = useState(false)
   const [search, setSearch] = useState('')
   const [homeSearch, setHomeSearch] = useState('')
   const [filters, setFilters] = useState<LibraryFilters>(defaultFilters)
@@ -116,6 +118,10 @@ export default function App() {
   const playerPanel = useRef<HTMLDivElement>(null)
   const stopCatalogImport = useRef(false)
   const sourceSyncLock = useRef(false)
+  const importingRef = useRef(false)
+  importingRef.current = importing
+
+  useEffect(() => startUpdateMonitor(() => setUpdateAvailable(true), () => importingRef.current), [])
 
   useEffect(() => {
     loadLibrary().then((loaded) => {
@@ -464,6 +470,7 @@ export default function App() {
       </header>
 
       {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}
+      {updateAvailable && <div className="notice" role="status">A Vivid update is ready. It will load automatically when the player is idle. <button onClick={() => window.location.reload()}>Update now</button></div>}
       <div hidden={view !== 'settings'}><InstallApp /></div>
 
       {view === 'home' && <>
