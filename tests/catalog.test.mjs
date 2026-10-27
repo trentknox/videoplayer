@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { onRequestPost, onRequestOptions } from '../functions/api/analyze.ts'
+import { scanCatalog } from '../src/catalogScan.ts'
 
 test('desktop apps can preflight catalog analysis without sending credentials', () => {
   const response = onRequestOptions()
@@ -36,6 +37,25 @@ test('a landing page can point to a same-origin catalog page', async () => {
     const request = new Request('https://app.example/api/analyze', { method: 'POST', body: JSON.stringify({ url: 'https://catalog.example/' }) })
     const result = await (await onRequestPost({ request })).json()
     assert.equal(result.suggestedCatalogUrl, 'https://catalog.example/home')
+  } finally { globalThis.fetch = originalFetch }
+})
+
+test('large listing pages remain discoverable across successive import batches', async () => {
+  const originalFetch = globalThis.fetch
+  const html = Array.from({ length: 225 }, (_, i) => `<a href="/films/${i}" title="Film ${i}"><img src="/poster.jpg"></a>`).join('')
+  globalThis.fetch = async () => new Response(html, { headers: { 'content-type': 'text/html' } })
+  try {
+    const source = 'https://catalog.example/'
+    const analyze = async (url) => (await onRequestPost({ request: new Request('https://app.example/api/analyze', { method: 'POST', body: JSON.stringify({ url }) }) })).json()
+    const imported = []
+    let cursor = source
+    do {
+      const batch = await scanCatalog(cursor, imported.map((item) => item.url), analyze)
+      imported.push(...batch.listings)
+      cursor = batch.cursor
+    } while (cursor)
+    assert.equal(imported.length, 225)
+    assert.equal(imported.at(-1).url, 'https://catalog.example/films/224')
   } finally { globalThis.fetch = originalFetch }
 })
 

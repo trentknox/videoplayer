@@ -165,7 +165,6 @@ export async function analyzePublicPage(rawUrl: string): Promise<AnalysisResult>
           if (url.origin !== pageUrl.origin || url.pathname === '/' || url.pathname === pageUrl.pathname || !title || title.trim().length < 2 || seen.has(url.href)) continue
           seen.add(url.href)
           listings.push({ url: url.href, title: title.trim().slice(0, 200) })
-          if (listings.length >= 200) break
         } catch { /* Ignore malformed links. */ }
       }
       const exposed = meta('og:video:secure_url') ?? meta('og:video:url') ?? meta('og:video') ?? meta('twitter:player:stream')
