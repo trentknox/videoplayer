@@ -54,9 +54,11 @@ export interface LibraryState {
   channels: Channel[]
   catalogCursors?: Record<string, string>
   catalogJobs?: Record<string, CatalogJob>
+  sources?: SavedSource[]
 }
 
 export interface CatalogJob { current?: string; pending: string[]; seen: string[] }
+export interface SavedSource { id: string; url: string; lastChecked?: string }
 
 export interface ImportDraft {
   url: string

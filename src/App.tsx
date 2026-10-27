@@ -6,6 +6,7 @@ import { analyzePublicPage, analyzeUrl, enrichYouTubeItem } from './providers'
 import { scanCatalog } from './catalogScan'
 import { advanceCatalogJob } from './catalogJob'
 import { movePlaylistItem } from './playlist'
+import { dueSource } from './sources'
 import { formatClock, makeSchedule, nowPlaying } from './scheduler'
 import type { AnalysisResult, Channel, ImportDraft, LibraryState, MediaItem, Playlist } from './types'
 
@@ -96,9 +97,11 @@ export default function App() {
   const [playlistName, setPlaylistName] = useState('')
   const [channelName, setChannelName] = useState('')
   const [channelFilter, setChannelFilter] = useState('')
+  const [sourceUrl, setSourceUrl] = useState('')
   const [clock, setClock] = useState(() => new Date())
   const importInput = useRef<HTMLInputElement>(null)
   const stopCatalogImport = useRef(false)
+  const sourceSyncLock = useRef(false)
 
   useEffect(() => {
     loadLibrary().then((loaded) => {
@@ -122,6 +125,14 @@ export default function App() {
     return active && option ? { ...active, embedUrl: option.url } : active
   }, [active, selectedPlayer])
   useEffect(() => { setSelectedPlayer('') }, [activeId])
+  useEffect(() => {
+    if (!library || importing || sourceSyncLock.current) return
+    const source = dueSource(library, clock.getTime())
+    if (!source) return
+    sourceSyncLock.current = true
+    updateLibrary((current) => ({ ...current, sources: current.sources?.map((entry) => entry.id === source.id ? { ...entry, lastChecked: new Date().toISOString() } : entry) }))
+    void importPageListings({ sourceUrl: source.url, background: true }).finally(() => { sourceSyncLock.current = false })
+  }, [library, importing, clock])
   const activePlaylist = library?.playlists.find((playlist) => playlist.id === activePlaylistId)
   const visibleMedia = useMemo(() => {
     if (!library) return []
@@ -205,15 +216,27 @@ export default function App() {
     }
   }
 
-  async function importPageListings(): Promise<void> {
-    if (!library || !draft.url.trim()) { setNotice('Enter a website URL first.'); return }
+  async function importPageListings(options?: { sourceUrl: string; background: boolean }): Promise<void> {
+    const importDraft = options?.background ? { ...blankDraft, url: options.sourceUrl } : draft
+    if (!library || !importDraft.url.trim()) { setNotice('Enter a website URL first.'); return }
     setImporting(true)
     stopCatalogImport.current = false
     setScanningCatalog(true)
     setCatalogSections([])
     setNotice('Looking for titles on this page…')
     try {
-      const source = new URL(draft.url).href
+      const source = new URL(importDraft.url).href
+      if (options?.background) {
+        const initial = await analyzePublicPage(source)
+        if (initial.analysisUnavailable) throw new Error('Source refresh failed; Vivid will retry later.')
+        if (initial.provider !== 'embed' || (initial.kind === 'video' && !initial.listings?.length)) {
+          const enriched = await enrichYouTubeItem(initial)
+          const item = toMediaItem(enriched, importDraft, true)
+          updateLibrary((current) => current.media.some((entry) => entry.sourceUrl === item.sourceUrl) ? current : { ...current, media: [item, ...current.media] })
+          setNotice('Saved source refreshed.')
+          return
+        }
+      }
       let job = library.catalogJobs?.[source] ?? { current: library.catalogCursors?.[source] ?? source, pending: [], seen: [source] }
       let start = job.current
       const known = new Set(library.media.map((item) => item.sourceUrl))
@@ -235,9 +258,9 @@ export default function App() {
           const analyzed = await Promise.all(batch.map(async (listing) => {
             try {
               const result = await analyzePublicPage(listing.url)
-              return toMediaItem({ ...result, title: result.title === new URL(listing.url).hostname ? listing.title : result.title, poster: result.poster ?? listing.poster }, { ...blankDraft, tags: draft.tags, series: draft.series, season: listing.season?.toString() ?? draft.season, episode: listing.episode?.toString() ?? draft.episode }, true)
+              return toMediaItem({ ...result, title: result.title === new URL(listing.url).hostname ? listing.title : result.title, poster: result.poster ?? listing.poster }, { ...blankDraft, tags: importDraft.tags, series: importDraft.series, season: listing.season?.toString() ?? importDraft.season, episode: listing.episode?.toString() ?? importDraft.episode }, true)
             } catch {
-              return toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster }, { ...blankDraft, tags: draft.tags, series: draft.series, season: listing.season?.toString() ?? draft.season, episode: listing.episode?.toString() ?? draft.episode }, true)
+              return toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster }, { ...blankDraft, tags: importDraft.tags, series: importDraft.series, season: listing.season?.toString() ?? importDraft.season, episode: listing.episode?.toString() ?? importDraft.episode }, true)
             }
           }))
           entries.push(...analyzed)
@@ -259,11 +282,24 @@ export default function App() {
         start = job.current
         setNotice(`Added ${added} titles. ${start ? 'Scanning more pages…' : 'Scan complete.'}`)
       }
-      if (added) setView('library')
+      if (added && !options?.background) setView('library')
       setNotice(`Added ${added} titles. ${start ? 'Scan paused; import again to continue.' : 'Scan complete.'} Some entries may be website links rather than playable videos.`)
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not inspect the page.')
     } finally { setImporting(false); setScanningCatalog(false) }
+  }
+
+  function addSource(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault()
+    try {
+      const url = new URL(sourceUrl.trim())
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Use an HTTP or HTTPS URL without credentials.')
+      url.hash = ''
+      if (library?.sources?.some((source) => source.url === url.href)) throw new Error('That source is already saved.')
+      updateLibrary((current) => ({ ...current, sources: [...(current.sources ?? []), { id: makeId('source'), url: url.href }] }))
+      setSourceUrl('')
+      setNotice('Source saved. Its first refresh will start shortly.')
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Enter a valid source URL.') }
   }
 
   function removeMedia(id: string): void {
@@ -375,6 +411,7 @@ export default function App() {
       </header>
 
       {notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}
+      <div hidden={view !== 'settings'}><InstallApp /></div>
 
       {view === 'home' && <>
         <section className="hero-grid">
@@ -413,7 +450,7 @@ export default function App() {
               <label>Runtime in minutes <span>optional; used for channel scheduling</span><input type="number" min="1" max="1440" placeholder="15" value={draft.durationMinutes} onChange={(event) => updateDraft('durationMinutes', event.target.value)} /></label>
               <label className="checkbox-row"><input type="checkbox" checked={pageAnalysis} onChange={(event) => setPageAnalysis(event.target.checked)} /> Analyze permitted public-page metadata</label>
               <button className="primary-button" disabled={importing}>{importing ? 'Analyzing…' : 'Analyze & import'}</button>
-              <button type="button" className="secondary-button" disabled={importing} onClick={importPageListings}>Import titles listed on this page</button>
+              <button type="button" className="secondary-button" disabled={importing} onClick={() => void importPageListings()}>Import titles listed on this page</button>
               {scanningCatalog && <button type="button" className="secondary-button" onClick={() => { stopCatalogImport.current = true; setNotice('Stopping after the current batch…') }}>Stop catalog scan</button>}
             </form>
             {catalogSections.length > 0 && <div><p>More catalog sections found. Select one, then import its titles:</p>{catalogSections.map((section) => <button type="button" className="secondary-button" key={section.url} disabled={importing} onClick={() => updateDraft('url', section.url)}>{section.title}</button>)}</div>}
@@ -454,6 +491,10 @@ export default function App() {
 
       {view === 'settings' && <section className="content-section settings-view">
         <span className="section-eyebrow">DATA & PROVIDERS</span><h1>Your library stays yours.</h1>
+        <section className="content-section"><h2>Sources</h2><p>Saved sources refresh when Vivid is open, then about every six hours. New titles appear on Home. Catalog scans may take multiple batches; links are sent to Vivid’s analysis service.</p>
+          <form className="inline-form" onSubmit={addSource}><input aria-label="Source URL to save" type="url" required value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://…" /><button className="primary-button">Add source</button></form>
+          {(library.sources ?? []).map((source) => <div key={source.id}><span>{source.url}</span> <button className="text-button" onClick={() => updateLibrary((current) => ({ ...current, sources: current.sources?.filter((entry) => entry.id !== source.id) }))}>Remove source</button></div>)}
+        </section>
         <div className="settings-grid">
           <article><h3>Export backup</h3><p>Download your library, metadata, playlists, and channels as JSON.</p><button className="secondary-button" onClick={() => exportLibrary(library)}>Export library</button></article>
           <article><h3>Import backup</h3><p>Restore a Vivid library export into this browser.</p><input ref={importInput} className="visually-hidden" type="file" accept="application/json" onChange={handleImportFile} /><button className="secondary-button" onClick={() => importInput.current?.click()}>Import library</button></article>
@@ -463,6 +504,26 @@ export default function App() {
       </section>}
     </main>
   )
+}
+
+type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> }
+
+function InstallApp() {
+  const [installPrompt, setInstallPrompt] = useState<InstallPrompt>()
+  const [installed, setInstalled] = useState(() => window.matchMedia('(display-mode: standalone)').matches)
+  useEffect(() => {
+    const onPrompt = (event: Event) => { event.preventDefault(); setInstallPrompt(event as InstallPrompt) }
+    const onInstalled = () => { setInstalled(true); setInstallPrompt(undefined) }
+    window.addEventListener('beforeinstallprompt', onPrompt)
+    window.addEventListener('appinstalled', onInstalled)
+    return () => { window.removeEventListener('beforeinstallprompt', onPrompt); window.removeEventListener('appinstalled', onInstalled) }
+  }, [])
+  if (window.vividWindow) return null
+  return <section className="content-section"><h2>Install Vivid</h2>
+    {installed ? <p>Vivid is running as an installed app.</p> : <><p>Install Vivid for its own window. It uses this browser profile’s library and loads the current web version when opened.</p>
+      {installPrompt ? <button className="secondary-button" onClick={() => { void installPrompt.prompt().then(() => installPrompt.userChoice).then(() => setInstallPrompt(undefined)) }}>Install Vivid</button>
+        : <p>In Microsoft Edge, open the browser menu, choose Apps, then choose Install this site as an app.</p>}</>}
+  </section>
 }
 
 interface MediaGridProps {

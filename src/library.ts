@@ -105,6 +105,7 @@ export function exportLibrary(state: LibraryState): void {
     ...state,
     catalogCursors: undefined,
     catalogJobs: undefined,
+    sources: state.sources?.map((source) => ({ ...source, url: redactUrl(source.url), lastChecked: undefined })),
     media: state.media.map((item) => ({ ...item, sourceUrl: redactUrl(item.sourceUrl), embedUrl: redactUrl(item.embedUrl), playerOptions: item.playerOptions?.map((option) => ({ ...option, url: redactUrl(option.url) })) })),
   }
   const blob = new Blob([JSON.stringify(safeState, null, 2)], { type: 'application/json' })
