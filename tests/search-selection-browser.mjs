@@ -17,10 +17,10 @@ try {
  await page.evaluate(async()=>{const db=await new Promise(resolve=>{const r=indexedDB.open('vivid-media-library',1);r.onsuccess=()=>resolve(r.result)});const state=await new Promise(resolve=>{const r=db.transaction('state').objectStore('state').get('library');r.onsuccess=()=>resolve(r.result)});state.sources=[{id:'test',url:'https://catalog.example/',lastChecked:new Date().toISOString()}];await new Promise(resolve=>{const tx=db.transaction('state','readwrite');tx.objectStore('state').put(state,'library');tx.oncomplete=resolve});db.close()})
  await page.evaluate(() => localStorage.setItem('vivid-ai-session', JSON.stringify({endpoint:'https://ai.example',token:'test-session'})))
  await page.reload(); await page.getByLabel('Search your library').fill('john wick'); await page.getByRole('button',{name:/Ask AI/}).click()
- try { await page.getByRole('dialog').getByText(/5 selected of 5 matches/).waitFor({timeout:20000}) } catch (e) { console.log('Dialog:', await page.getByRole('dialog').innerText()); throw e }
+ try { await page.getByRole('dialog').getByText(/5 selected of 5 shown/).waitFor({timeout:20000}) } catch (e) { console.log('Dialog:', await page.getByRole('dialog').innerText()); throw e }
  await page.getByRole('button',{name:/Ask AI/}).waitFor({state:'visible',timeout:20000}); assert.ok(inferred, 'AI returned a partial selection before source matches were combined')
  await page.getByLabel('Include The Continental John Wick').uncheck()
- await page.getByRole('dialog').getByText(/4 selected of 5 matches/).waitFor()
+ await page.getByRole('dialog').getByText(/4 selected of 5 shown/).waitFor()
  await page.getByRole('button',{name:'Create playlist & start channel'}).click()
  await page.locator('.player-toolbar').waitFor(); await page.waitForTimeout(1600)
  const saved=await page.evaluate(async()=>{const db=await new Promise(resolve=>{const r=indexedDB.open('vivid-media-library',1);r.onsuccess=()=>resolve(r.result)});return await new Promise(resolve=>{const r=db.transaction('state').objectStore('state').get('library');r.onsuccess=()=>resolve({media:r.result.media,playlist:r.result.playlists[0],channel:r.result.channels[0]})})})

@@ -46,7 +46,7 @@ try {
   await page.getByLabel('Search your library').fill('Create an animation channel')
   await page.getByRole('button', { name: 'Ask AI' }).click()
   await page.getByRole('dialog').getByRole('heading', { name: 'Animation channel' }).waitFor()
-  assert.match(await page.getByRole('region', { name: 'AI search results' }).innerText(), /1 matches/)
+  assert.match(await page.getByRole('region', { name: 'AI search results' }).innerText(), /1 total matches/)
   await page.getByRole('region', { name: 'AI search results' }).getByRole('button', { name: 'New source video', exact: true }).waitFor()
   assert.equal(await page.getByRole('region', { name: 'AI search results' }).locator('img').count(), 1)
   await page.getByText('Animation favorites', { exact: true }).waitFor()

@@ -197,7 +197,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(400, {'error': 'invalid_messages'})
             if any(not isinstance(m, dict) or m.get('role') not in ('system', 'user', 'assistant') or not isinstance(m.get('content'), str) or len(m['content']) > 16000 for m in messages):
                 return self.send_json(400, {'error': 'invalid_messages'})
-            max_tokens = max(1, min(int(request.get('max_tokens', 512)), 512))
+            max_tokens = max(1, min(int(request.get('max_tokens', 512)), 1024))
         except (ValueError, TypeError, json.JSONDecodeError):
             return self.send_json(400, {'error': 'invalid_request'})
         for model in MODELS:

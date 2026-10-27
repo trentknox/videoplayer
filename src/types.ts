@@ -17,6 +17,7 @@ export interface MediaItem {
   countries?: string[]
   year?: number
   rating?: number
+  ratingCount?: number
   imdbRating?: number
   metacriticScore?: number
   budgetUsd?: number
@@ -107,6 +108,7 @@ export interface AnalysisResult {
   countries?: string[]
   year?: number
   rating?: number
+  ratingCount?: number
   imdbRating?: number
   metacriticScore?: number
   budgetUsd?: number

@@ -146,7 +146,7 @@ function structuredVideo(html: string, base: URL): StructuredVideo {
   return {}
 }
 
-function catalogMetadata(html: string): { durationSeconds?: number; imdbRating?: number; metacriticScore?: number; contentType?: 'movie' | 'series' | 'episode'; contentRating?: string; genres?: string[]; countries?: string[]; year?: number; actors?: string[]; rating?: number; budgetUsd?: number; revenueUsd?: number } {
+function catalogMetadata(html: string): { durationSeconds?: number; ratingCount?: number; imdbRating?: number; metacriticScore?: number; contentType?: 'movie' | 'series' | 'episode'; contentRating?: string; genres?: string[]; countries?: string[]; year?: number; actors?: string[]; rating?: number; budgetUsd?: number; revenueUsd?: number } {
   const find = (value: unknown, depth = 0): Record<string, unknown> | undefined => {
     if (!value || depth > 6) return undefined
     if (Array.isArray(value)) { for (const entry of value) { const found = find(entry, depth + 1); if (found) return found } return undefined }
@@ -168,6 +168,7 @@ function catalogMetadata(html: string): { durationSeconds?: number; imdbRating?:
       const ratingRecord = record.aggregateRating && typeof record.aggregateRating === 'object' ? record.aggregateRating as Record<string, unknown> : undefined
       const rating = Number(ratingRecord?.ratingValue)
       const maximum = Number(ratingRecord?.bestRating ?? 10)
+      const ratingCount = Number(ratingRecord?.ratingCount)
       const author = ratingRecord?.author && typeof ratingRecord.author === 'object' ? textField((ratingRecord.author as Record<string, unknown>).name) : textField(ratingRecord?.author)
       const normalized = Number.isFinite(rating) && Number.isFinite(maximum) && maximum > 0 && rating >= 0 && rating <= maximum ? rating / maximum : undefined
       const usd = (value: unknown): number | undefined => {
@@ -184,6 +185,7 @@ function catalogMetadata(html: string): { durationSeconds?: number; imdbRating?:
         genres: names(record.genre), countries: names(record.countryOfOrigin), actors: names(record.actor ?? record.actors),
         year: match ? Number(match[1]) : undefined,
         rating: normalized === undefined ? undefined : normalized * 10,
+        ratingCount: Number.isSafeInteger(ratingCount) && ratingCount >= 0 ? ratingCount : undefined,
         imdbRating: normalized !== undefined && author?.toLowerCase() === 'imdb' ? normalized * 10 : undefined,
         metacriticScore: normalized !== undefined && author?.toLowerCase() === 'metacritic' ? normalized * 100 : undefined,
         budgetUsd: usd(record.budget), revenueUsd: usd(record.boxOffice ?? record.revenue),

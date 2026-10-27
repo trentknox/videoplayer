@@ -1,0 +1,12 @@
+import { chromium } from 'playwright'
+import assert from 'node:assert/strict'
+const browser=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true})
+const page=await browser.newPage()
+try {
+ await page.addInitScript(()=>{const RealDate=Date;window.__clockOffset=0;class FakeDate extends RealDate{constructor(...args){super(...(args.length?args:[RealDate.now()+window.__clockOffset]))}static now(){return RealDate.now()+window.__clockOffset}};window.Date=FakeDate})
+ await page.goto(process.env.VIVID_TEST_URL || 'http://127.0.0.1:4181/');await page.getByLabel('Search your library').waitFor();await page.waitForTimeout(1000)
+ await page.evaluate(async()=>{const db=await new Promise(resolve=>{const r=indexedDB.open('vivid-media-library',1);r.onsuccess=()=>resolve(r.result)});const state=await new Promise(resolve=>{const r=db.transaction('state').objectStore('state').get('library');r.onsuccess=()=>resolve(r.result)});const base={provider:'direct',kind:'video',tags:[],actors:[],addedAt:new Date().toISOString(),durationSeconds:900};state.media=[{...base,id:'first',title:'Unknown runtime film',durationEstimated:true,sourceUrl:'https://example.test/a.mp4',embedUrl:'https://example.test/a.mp4'},{...base,id:'second',title:'Next film',durationEstimated:false,sourceUrl:'https://example.test/b.mp4',embedUrl:'https://example.test/b.mp4'}];state.playlists=[{id:'queue',name:'Queue',mediaIds:['first','second'],createdAt:new Date().toISOString()}];state.channels=[{id:'live',name:'Live',filter:'',description:'',accent:'#000',anchor:new Date(Date.now()-5000).toISOString(),durationHours:24,playlistId:'queue'}];await new Promise(resolve=>{const tx=db.transaction('state','readwrite');tx.objectStore('state').put(state,'library');tx.oncomplete=resolve});db.close()})
+ await page.reload();await page.getByRole('button',{name:'channels',exact:true}).click();await page.getByRole('region',{name:'Channel guide'}).getByRole('button',{name:'Live',exact:true}).click();await page.getByRole('heading',{name:'Unknown runtime film',exact:true}).waitFor()
+ await page.getByText('Runtime is unknown.',{exact:false}).waitFor();await page.evaluate(()=>{window.__clockOffset=1000000});await page.getByRole('button',{name:/Watch later/}).click();await page.waitForTimeout(500)
+ assert.equal(await page.getByRole('heading',{name:'Unknown runtime film',exact:true}).count(),1);console.log('An estimated runtime does not force a live channel to cut off the current video')
+} finally {await browser.close()}

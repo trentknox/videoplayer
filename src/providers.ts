@@ -132,7 +132,7 @@ export async function analyzePublicPage(rawUrl: string, signal?: AbortSignal): P
     return {
       provider: result.provider as Provider, kind: result.kind, sourceUrl: result.sourceUrl, embedUrl: result.embedUrl,
       externalId: result.externalId, title: result.title, poster: result.poster, description: result.description, playerOptions: result.playerOptions,
-      contentType: result.contentType, contentRating: result.contentRating, genres: result.genres, countries: result.countries, year: result.year, actors: result.actors, rating: result.rating, imdbRating: result.imdbRating, metacriticScore: result.metacriticScore, budgetUsd: result.budgetUsd, revenueUsd: result.revenueUsd,
+      contentType: result.contentType, contentRating: result.contentRating, genres: result.genres, countries: result.countries, year: result.year, actors: result.actors, rating: result.rating, ratingCount: result.ratingCount, imdbRating: result.imdbRating, metacriticScore: result.metacriticScore, budgetUsd: result.budgetUsd, revenueUsd: result.revenueUsd,
       durationSeconds: result.durationSeconds, notes: result.notes, people: result.people, listings: result.listings, catalogSections: result.catalogSections, searchForm: result.searchForm, suggestedCatalogUrl: result.suggestedCatalogUrl, nextCatalogUrl: result.nextCatalogUrl,
     }
   } catch {

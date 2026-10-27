@@ -9,3 +9,9 @@ test('filters combine public metadata and keep unknown numeric values after know
   assert.deepEqual(filterLibrary(items, { ...defaultFilters, sort: 'rating', order: 'desc' }).map((item) => item.id), ['c', 'a', 'b'])
   assert.deepEqual(filterLibrary(items, { ...defaultFilters, query: 'canada', sort: 'title', order: 'asc' }).map((item) => item.id), ['a', 'b'])
 })
+
+test('popularity sorts by available source rating counts, leaving unknown counts last', () => {
+  const base = { title: 'Film', tags: [], actors: [], addedAt: '2026-01-01' }
+  const items = [{...base,id:'a',ratingCount:10},{...base,id:'b',ratingCount:200},{...base,id:'c'}]
+  assert.deepEqual(filterLibrary(items, {...defaultFilters,sort:'votes',order:'desc'}).map(item=>item.id), ['b','a','c'])
+})

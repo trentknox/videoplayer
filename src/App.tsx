@@ -85,6 +85,7 @@ function toMediaItem(analysis: AnalysisResult, draft: ImportDraft, pageAnalysis:
     countries: analysis.countries,
     year: analysis.year,
     rating: analysis.rating,
+    ratingCount: analysis.ratingCount,
     imdbRating: analysis.imdbRating,
     metacriticScore: analysis.metacriticScore,
     budgetUsd: analysis.budgetUsd,
@@ -140,6 +141,9 @@ export default function App() {
   const [aiBusy, setAiBusy] = useState(false)
   const [aiResult, setAiResult] = useState<AiSearchResult>()
   const [excludedAiIds, setExcludedAiIds] = useState<Set<string>>(new Set())
+  const [aiSort, setAiSort] = useState<'relevance' | LibraryFilters['sort']>('relevance')
+  const [aiType, setAiType] = useState('')
+  const [aiGenre, setAiGenre] = useState('')
   const [aiDialogOpen, setAiDialogOpen] = useState(false)
   const [aiFeedback, setAiFeedback] = useState('')
   const [filters, setFilters] = useState<LibraryFilters>(defaultFilters)
@@ -158,6 +162,9 @@ export default function App() {
   libraryRef.current = library
   const syncRef = useRef<{ session: AiSession; base: SharedLibrary | null; busy: boolean; halted: boolean } | undefined>(undefined)
   const livePositionRef = useRef<{ id: string; position: number } | undefined>(undefined)
+  const heldLiveSlot = useRef<{ channelId: string; mediaId: string; slotId: string; startsAt: string } | undefined>(undefined)
+  const metadataJobsRef = useRef<{ search?: AbortController; channel?: AbortController }>({})
+  const refreshedChannelQueue = useRef('')
   const lastPosterRepair = useRef(0)
   importingRef.current = importing
 
@@ -251,7 +258,7 @@ export default function App() {
       if (cancelled) return
       if (result.analysisUnavailable) { setNotice('Could not refresh metadata for this title.'); return }
       updateLibrary((current) => ({ ...current, media: current.media.map((entry) => entry.id === id
-        ? { ...entry, ...(result.kind === 'video' ? { provider: result.provider, kind: result.kind, embedUrl: result.embedUrl, playerOptions: result.playerOptions } : {}), description: entry.description || result.description, poster: entry.poster || result.poster, contentType: result.contentType ?? entry.contentType, contentRating: result.contentRating ?? entry.contentRating, genres: result.genres?.length ? result.genres : entry.genres, countries: result.countries?.length ? result.countries : entry.countries, year: result.year ?? entry.year, durationSeconds: result.durationSeconds && (entry.durationEstimated ?? (entry.durationSeconds === 900 || entry.durationSeconds === 1800)) ? result.durationSeconds : entry.durationSeconds, durationEstimated: result.durationSeconds && (entry.durationEstimated ?? (entry.durationSeconds === 900 || entry.durationSeconds === 1800)) ? false : entry.durationEstimated, rating: result.rating ?? entry.rating, imdbRating: result.imdbRating ?? entry.imdbRating, metacriticScore: result.metacriticScore ?? entry.metacriticScore, budgetUsd: result.budgetUsd ?? entry.budgetUsd, revenueUsd: result.revenueUsd ?? entry.revenueUsd, actors: [...new Set([...entry.actors, ...(result.actors ?? [])])] } : entry) }))
+        ? { ...entry, ...(result.kind === 'video' ? { provider: result.provider, kind: result.kind, embedUrl: result.embedUrl, playerOptions: result.playerOptions } : {}), description: entry.description || result.description, poster: entry.poster || result.poster, contentType: result.contentType ?? entry.contentType, contentRating: result.contentRating ?? entry.contentRating, genres: result.genres?.length ? result.genres : entry.genres, countries: result.countries?.length ? result.countries : entry.countries, year: result.year ?? entry.year, durationSeconds: result.durationSeconds && (entry.durationEstimated ?? (entry.durationSeconds === 900 || entry.durationSeconds === 1800)) ? result.durationSeconds : entry.durationSeconds, durationEstimated: result.durationSeconds && (entry.durationEstimated ?? (entry.durationSeconds === 900 || entry.durationSeconds === 1800)) ? false : entry.durationEstimated, rating: result.rating ?? entry.rating, ratingCount: result.ratingCount ?? entry.ratingCount, imdbRating: result.imdbRating ?? entry.imdbRating, metacriticScore: result.metacriticScore ?? entry.metacriticScore, budgetUsd: result.budgetUsd ?? entry.budgetUsd, revenueUsd: result.revenueUsd ?? entry.revenueUsd, actors: [...new Set([...entry.actors, ...(result.actors ?? [])])] } : entry) }))
       setNotice(result.kind === 'video' ? 'Player and metadata refreshed. Playback depends on the provider.' : 'Metadata refreshed; no playable embed was found.')
     }).catch(() => { if (!cancelled) setNotice('Could not refresh this player.') })
     return () => { cancelled = true }
@@ -273,6 +280,14 @@ export default function App() {
     void repairPosters()
   }, [library, importing, clock])
   const activePlaylist = library?.playlists.find((playlist) => playlist.id === activePlaylistId)
+  const mediaById = useMemo(() => new Map((library?.media ?? []).map((item) => [item.id, item])), [library?.media])
+  const aiMatches = useMemo(() => (aiResult?.ids ?? []).map((id) => mediaById.get(id)).filter((item): item is MediaItem => Boolean(item)), [aiResult, mediaById])
+  const aiGenres = useMemo(() => [...new Set(aiMatches.flatMap((item) => item.genres ?? []))].sort(), [aiMatches])
+  const filteredAiMatches = useMemo(() => {
+    const filtered = aiMatches.filter((item) => (!aiType || mediaType(item) === aiType) && (!aiGenre || (item.genres ?? []).includes(aiGenre)))
+    return aiSort === 'relevance' ? filtered : filterLibrary(filtered, { ...defaultFilters, sort: aiSort, order: aiSort === 'title' ? 'asc' : 'desc' })
+  }, [aiMatches, aiType, aiGenre, aiSort])
+  const filteredAiIds = useMemo(() => new Set(filteredAiMatches.map((item) => item.id)), [filteredAiMatches])
   const visibleMedia = useMemo(() => {
     if (!library) return []
     return filterLibrary(library.media, { ...filters, query: search })
@@ -287,21 +302,42 @@ export default function App() {
   }, [library, clock])
 
   useEffect(() => {
-    if (!activeChannelId || !library) return
+    if (!activeChannelId || !library) { heldLiveSlot.current = undefined; return }
     const channel = library.channels.find((entry) => entry.id === activeChannelId)
-    if (!channel) return
+    if (!channel) { heldLiveSlot.current = undefined; return }
     let timer: number | undefined
     const update = () => {
+      const held = heldLiveSlot.current
+      const heldItem = held?.channelId === channel.id ? library.media.find((item) => item.id === held.mediaId) : undefined
+      if (held && heldItem && (heldItem.durationEstimated ?? (heldItem.durationSeconds === 900 || heldItem.durationSeconds === 1800))) {
+        setActiveId(held.mediaId); setChannelSlotId(held.slotId); setChannelSlotStart(held.startsAt)
+        return
+      }
+      heldLiveSlot.current = undefined
       const now = new Date()
       const slot = nowPlaying(makeSchedule(channel, library.media, now, library.playlists), now)
       if (!slot) return
       setActiveId(slot.mediaId)
       setChannelSlotId(slot.id)
       setChannelSlotStart(slot.startsAt)
-      timer = window.setTimeout(update, Math.max(100, new Date(slot.endsAt).getTime() - now.getTime() + 50))
+      const item = library.media.find((entry) => entry.id === slot.mediaId)
+      if (item && (item.durationEstimated ?? (item.durationSeconds === 900 || item.durationSeconds === 1800))) {
+        heldLiveSlot.current = { channelId: channel.id, mediaId: slot.mediaId, slotId: slot.id, startsAt: slot.startsAt }
+      } else timer = window.setTimeout(update, Math.max(100, new Date(slot.endsAt).getTime() - now.getTime() + 50))
     }
     update()
     return () => { if (timer !== undefined) window.clearTimeout(timer) }
+  }, [activeChannelId, library])
+
+  useEffect(() => {
+    if (!activeChannelId || !library) { refreshedChannelQueue.current = ''; return }
+    const channel = library.channels.find((item) => item.id === activeChannelId)
+    const ids = channel?.playlistId ? library.playlists.find((item) => item.id === channel.playlistId)?.mediaIds : channel?.mediaIds
+    if (!ids?.length) return
+    const key = `${activeChannelId}:${ids.join(',')}`
+    if (refreshedChannelQueue.current === key) return
+    refreshedChannelQueue.current = key
+    void refreshQueueDurations(ids, library)
   }, [activeChannelId, library])
 
   useEffect(() => {
@@ -549,6 +585,7 @@ export default function App() {
     if (!library || !homeSearch.trim()) return
     setAiDialogOpen(true)
     setExcludedAiIds(new Set())
+    setAiSort('relevance'); setAiType(''); setAiGenre('')
     setAiResult(undefined)
     setAiResult(searchByKeywords(homeSearch, library.media))
     setAiFeedback('Showing library keyword matches while source and AI search continue…')
@@ -589,6 +626,10 @@ export default function App() {
             const existing = new Set(current.media.map((item) => item.sourceUrl))
             return { ...current, media: [...entries.filter((item) => !existing.has(item.sourceUrl)), ...current.media.map(addActors)] }
           })
+        }
+        if (direct.listings.length) {
+          const foundUrls = new Set(direct.listings.map((item) => item.url))
+          void refreshQueueDurations(media.filter((item) => foundUrls.has(item.sourceUrl)).map((item) => item.id), { ...library, media }, 'search')
         }
         if (direct.searched) {
           sourceStatus = ` Searched ${direct.searched} source${direct.searched === 1 ? '' : 's'} directly and found ${direct.listings.length} listed titles.${direct.incomplete ? ' Some source results may be incomplete.' : ''}`
@@ -653,36 +694,40 @@ export default function App() {
     setView('player')
   }
 
-  async function refreshQueueDurations(ids: string[], current: LibraryState): Promise<void> {
+  async function refreshQueueDurations(ids: string[], current: LibraryState, kind: 'search' | 'channel' = 'channel'): Promise<void> {
     const byId = new Map(current.media.map((item) => [item.id, item]))
-    const candidates = ids.map((id) => byId.get(id)).filter((item): item is MediaItem => Boolean(item && item.provider === 'embed' && ((item.durationEstimated ?? (item.durationSeconds === 900 || item.durationSeconds === 1800)) || !item.description || !item.actors.length || !item.genres?.length))).slice(0, 20)
-    const deadline = AbortSignal.timeout(30000)
-    const results: Array<{ id: string; result: AnalysisResult }> = []
-    for (let offset = 0; offset < candidates.length && !deadline.aborted; offset += 3) {
-      const batch = await Promise.all(candidates.slice(offset, offset + 3).map(async (item) => ({ id: item.id, result: await analyzePublicPage(item.sourceUrl, deadline) })))
+    const candidates = ids.map((id) => byId.get(id)).filter((item): item is MediaItem => Boolean(item && item.provider === 'embed' && ((item.durationEstimated ?? (item.durationSeconds === 900 || item.durationSeconds === 1800)) || !item.description || !item.actors.length || !item.genres?.length))).slice(0, 200)
+    metadataJobsRef.current[kind]?.abort()
+    const controller = new AbortController()
+    metadataJobsRef.current[kind] = controller
+    const deadline = AbortSignal.any([controller.signal, AbortSignal.timeout(120000)])
+    let results: Array<{ id: string; result: AnalysisResult }> = []
+    for (let offset = 0; offset < candidates.length && !deadline.aborted; offset += 4) {
+      const batch = await Promise.all(candidates.slice(offset, offset + 4).map(async (item) => ({ id: item.id, result: await analyzePublicPage(item.sourceUrl, deadline) })))
       results.push(...batch.filter(({ result }) => !result.analysisUnavailable))
+      if ((offset + 4) % 12 !== 0 && offset + 4 < candidates.length && !deadline.aborted) continue
+      if (!results.length) continue
+      const updates = new Map(results.map(({ id, result }) => [id, result]))
+      results = []
+      updateLibrary((state) => ({ ...state, media: state.media.map((item) => {
+        const result = updates.get(item.id)
+        if (!result) return item
+        const useDuration = Boolean(result.durationSeconds && (item.durationEstimated ?? (item.durationSeconds === 900 || item.durationSeconds === 1800)))
+        return { ...item, description: item.description || result.description, poster: item.poster || result.poster, contentType: item.contentType || result.contentType, genres: item.genres?.length ? item.genres : result.genres, countries: item.countries?.length ? item.countries : result.countries, year: item.year ?? result.year, rating: item.rating ?? result.rating, ratingCount: item.ratingCount ?? result.ratingCount, imdbRating: item.imdbRating ?? result.imdbRating, metacriticScore: item.metacriticScore ?? result.metacriticScore, actors: [...new Set([...item.actors, ...(result.actors ?? [])])], durationSeconds: useDuration ? result.durationSeconds! : item.durationSeconds, durationEstimated: useDuration ? false : item.durationEstimated }
+      }) }))
     }
-    if (!results.length) return
-    const updates = new Map(results.map(({ id, result }) => [id, result]))
-    updateLibrary((state) => ({ ...state, media: state.media.map((item) => {
-      const result = updates.get(item.id)
-      if (!result) return item
-      const useDuration = Boolean(result.durationSeconds && (item.durationEstimated ?? (item.durationSeconds === 900 || item.durationSeconds === 1800)))
-      return { ...item, description: item.description || result.description, poster: item.poster || result.poster, contentType: item.contentType || result.contentType, genres: item.genres?.length ? item.genres : result.genres, countries: item.countries?.length ? item.countries : result.countries, year: item.year ?? result.year, rating: item.rating ?? result.rating, imdbRating: item.imdbRating ?? result.imdbRating, metacriticScore: item.metacriticScore ?? result.metacriticScore, actors: [...new Set([...item.actors, ...(result.actors ?? [])])], durationSeconds: useDuration ? result.durationSeconds! : item.durationSeconds, durationEstimated: useDuration ? false : item.durationEstimated }
-    }) }))
   }
 
   function saveAiPreview(startChannel: boolean, suggestion?: { name: string; ids: string[] }): void {
     if (!library || !aiResult?.ids.length) return
     const available = new Set(library.media.map((item) => item.id))
-    const mediaIds = (suggestion?.ids ?? aiResult.ids).filter((id) => available.has(id) && !excludedAiIds.has(id))
+    const mediaIds = (suggestion?.ids ?? filteredAiMatches.map((item) => item.id)).filter((id) => available.has(id) && filteredAiIds.has(id) && !excludedAiIds.has(id))
     if (!mediaIds.length) { setAiFeedback('No titles are selected. Include at least one title before creating a playlist.'); return }
     const playlist: Playlist = { id: makeId('playlist'), name: suggestion?.name ?? aiResult.name, mediaIds, createdAt: new Date().toISOString() }
     const channel: Channel | undefined = startChannel ? { id: makeId('channel'), name: playlist.name, description: `Loops the ${playlist.name} playlist in order.`, filter: '', accent: accents[library.channels.length % accents.length], anchor: new Date().toISOString(), durationHours: 24, playlistId: playlist.id } : undefined
     updateLibrary((current) => ({ ...current, playlists: [playlist, ...current.playlists], channels: channel ? [channel, ...current.channels] : current.channels }))
     setAiDialogOpen(false)
     if (channel) {
-      void refreshQueueDurations(mediaIds, library)
       setClock(new Date())
       setActivePlaylistId(undefined)
       setActiveId(mediaIds[0])
@@ -935,9 +980,9 @@ export default function App() {
             <div className="ai-dialog-heading"><div><span className="section-eyebrow">AI SEARCH</span><h2 id="ai-dialog-title">{aiResult?.name ?? 'Your request'}</h2></div><button className="secondary-button" aria-label="Close search results" autoFocus onClick={() => setAiDialogOpen(false)}>×</button></div>
             <p className="ai-dialog-query">{homeSearch}</p><p role="status">{aiFeedback}</p>
             {!aiSession && !aiBusy && <button className="secondary-button" onClick={() => { setAiDialogOpen(false); setView('settings') }}>Connect AI in Settings</button>}
-            {aiResult && <section aria-label="AI search results"><p>{aiResult.ids.filter((id) => !excludedAiIds.has(id)).length} selected of {aiResult.ids.length} matches · examined {aiResult.examined} of {aiResult.total} library titles{aiResult.examined < aiResult.total ? ' (results may be incomplete)' : ''}</p>
-              <div className="ai-preview-grid">{aiResult.ids.slice(0, 60).map((id) => { const item = library.media.find((entry) => entry.id === id); return item ? <div className="ai-preview-card" key={id}><button className="ai-preview-play" aria-label={item.title} onClick={() => { setAiDialogOpen(false); playFromLibrary(id) }}><PosterImage item={item} /><span>{item.title}</span></button><label className="ai-preview-include"><input type="checkbox" aria-label={`Include ${item.title}`} checked={!excludedAiIds.has(id)} onChange={(event) => setExcludedAiIds((current) => { const next = new Set(current); if (event.target.checked) next.delete(id); else next.add(id); return next })} /> Include</label></div> : null })}</div>{aiResult.ids.length > 60 && <p>Showing the first 60 results; the playlist can include all matches.</p>}
-              {aiResult.suggestions.length > 0 && <section className="ai-suggestions"><h3>Suggested playlists and channels</h3>{aiResult.suggestions.map((suggestion) => <div className="ai-suggestion" key={suggestion.name}><div><strong>{suggestion.name}</strong><p>{suggestion.ids.map((id) => library.media.find((item) => item.id === id)?.title).filter(Boolean).join(' · ')}</p></div><div className="ai-suggestion-actions"><button className="secondary-button" onClick={() => saveAiPreview(false, suggestion)}>Save {suggestion.name} playlist</button><button className="secondary-button" onClick={() => saveAiPreview(true, suggestion)}>Start {suggestion.name} channel</button></div></div>)}</section>}
+            {aiResult && <section aria-label="AI search results"><div className="search-result-filters"><label>Type<select aria-label="Search result type" value={aiType} onChange={(event) => setAiType(event.target.value)}><option value="">All types</option><option value="movie">Movies</option><option value="series">Series</option><option value="episode">Episodes</option></select></label><label>Genre<select aria-label="Search result genre" value={aiGenre} onChange={(event) => setAiGenre(event.target.value)}><option value="">All genres</option>{aiGenres.map((genre) => <option key={genre}>{genre}</option>)}</select></label><label>Sort<select aria-label="Sort search results" value={aiSort} onChange={(event) => setAiSort(event.target.value as typeof aiSort)}><option value="relevance">Relevance</option><option value="rating">Highest source rating</option><option value="votes">Popularity (source rating count)</option><option value="imdb">Highest IMDb rating</option><option value="metacritic">Highest Metacritic score</option><option value="budget">Highest budget</option><option value="revenue">Highest revenue</option><option value="year">Newest year</option><option value="title">Title A–Z</option></select></label></div><p>Popularity uses the source’s rating count, not view counts. Titles without a value sort last.</p><p>{filteredAiMatches.filter((item) => !excludedAiIds.has(item.id)).length} selected of {filteredAiMatches.length} shown · {aiResult.ids.length} total matches · examined {aiResult.examined} of {aiResult.total} library titles{aiResult.examined < aiResult.total ? ' (results may be incomplete)' : ''}</p>
+              <div className="ai-preview-grid">{filteredAiMatches.slice(0, 60).map((item) => { const id = item.id; return item ? <div className="ai-preview-card" key={id}><button className="ai-preview-play" aria-label={item.title} onClick={() => { setAiDialogOpen(false); playFromLibrary(id) }}><PosterImage item={item} /><span>{item.title}</span></button><label className="ai-preview-include"><input type="checkbox" aria-label={`Include ${item.title}`} checked={!excludedAiIds.has(id)} onChange={(event) => setExcludedAiIds((current) => { const next = new Set(current); if (event.target.checked) next.delete(id); else next.add(id); return next })} /> Include</label></div> : null })}</div>{filteredAiMatches.length > 60 && <p>Showing the first 60 results; the playlist can include all filtered matches.</p>}
+              {aiResult.suggestions.length > 0 && <section className="ai-suggestions"><h3>Suggested playlists and channels</h3>{aiResult.suggestions.map((suggestion) => <div className="ai-suggestion" key={suggestion.name}><div className="ai-suggestion-heading"><div><strong>{suggestion.name}</strong><p>{suggestion.ids.filter((id) => filteredAiIds.has(id) && !excludedAiIds.has(id)).length} selected · {suggestion.ids.length} titles</p></div><div className="ai-suggestion-actions"><button className="secondary-button" onClick={() => saveAiPreview(false, suggestion)}>Save {suggestion.name} playlist</button><button className="secondary-button" onClick={() => saveAiPreview(true, suggestion)}>Start {suggestion.name} channel</button></div></div><div className="suggestion-carousel" aria-label={`${suggestion.name} titles`}>{suggestion.ids.filter((id) => filteredAiIds.has(id)).slice(0, 100).map((id) => { const item = mediaById.get(id); return item ? <button key={id} className={`suggestion-poster ${excludedAiIds.has(id) ? 'is-excluded' : ''}`} aria-label={`Play ${item.title}`} onClick={() => { setAiDialogOpen(false); playFromLibrary(id) }}><PosterImage item={item} /><span>{item.title}</span></button> : null })}</div>{suggestion.ids.length > 100 && <p>Showing the first 100 posters; the collection includes all selected titles.</p>}</div>)}</section>}
               {aiResult.ids.length > 0 && <div className="ai-preview-actions"><button className="primary-button" onClick={() => saveAiPreview(true)}>Create playlist &amp; start channel</button><button className="secondary-button" onClick={() => saveAiPreview(false)}>Save playlist</button></div>}
             </section>}
           </section></div>}
@@ -958,6 +1003,7 @@ export default function App() {
               <div>
                 <h1>{active?.title ?? 'Your media, one screen.'}</h1>
                 {active && <p>{providerLabel(active.provider)} · {active.kind} · {formatRuntime(active.durationSeconds)}</p>}
+                {active && activeChannelId && (active.durationEstimated ?? (active.durationSeconds === 900 || active.durationSeconds === 1800)) && <p>Runtime is unknown. Vivid will not switch videos using this estimate; live timing may be approximate.</p>}
                 {active?.description && <p>{active.description}</p>}
                 {active && <p>{[active.year && String(active.year), ...(active.genres ?? []), active.imdbRating !== undefined ? `IMDb ${active.imdbRating.toFixed(1)}/10` : active.metacriticScore !== undefined ? `Metacritic ${Math.round(active.metacriticScore)}/100` : active.rating !== undefined ? `Source rating ${active.rating.toFixed(1)}/10` : '', active.actors.length ? `Cast: ${active.actors.slice(0, 8).join(', ')}` : ''].filter(Boolean).join(' · ')}</p>}
                 {active && (active.playerOptions?.length ?? 0) > 1 && <label>Player <select value={selectedPlayer || active.embedUrl} onChange={(event) => setSelectedPlayer(event.target.value)}>{active.playerOptions?.map((option) => <option key={option.url} value={option.url}>{option.name}</option>)}</select></label>}
@@ -1011,7 +1057,7 @@ export default function App() {
           <label>Genre<select aria-label="Genre" value={filters.genre} onChange={(event) => setFilters((value) => ({ ...value, genre: event.target.value }))}><option value="">All genres</option>{[...new Set(library.media.flatMap((item) => item.genres ?? []))].sort().map((genre) => <option key={genre}>{genre}</option>)}</select></label>
           <label>Country<select aria-label="Country" value={filters.country} onChange={(event) => setFilters((value) => ({ ...value, country: event.target.value }))}><option value="">All countries</option>{[...new Set(library.media.flatMap((item) => item.countries ?? []))].sort().map((country) => <option key={country}>{country}</option>)}</select></label>
           <label>Year<select aria-label="Year" value={filters.year} onChange={(event) => setFilters((value) => ({ ...value, year: event.target.value }))}><option value="">All years</option>{[...new Set(library.media.flatMap((item) => mediaYear(item) ? [mediaYear(item)!] : []))].sort((a, b) => b - a).map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
-          <label>Sort<select aria-label="Sort" value={filters.sort} onChange={(event) => setFilters((value) => ({ ...value, sort: event.target.value as LibraryFilters['sort'] }))}><option value="added">Date added</option><option value="title">Title</option><option value="year">Year</option><option value="rating">Source rating</option><option value="imdb">IMDb rating</option><option value="metacritic">Metacritic score</option><option value="budget">Budget (USD)</option><option value="revenue">Revenue (USD)</option></select></label>
+          <label>Sort<select aria-label="Sort" value={filters.sort} onChange={(event) => setFilters((value) => ({ ...value, sort: event.target.value as LibraryFilters['sort'] }))}><option value="added">Date added</option><option value="title">Title</option><option value="year">Year</option><option value="rating">Source rating</option><option value="votes">Popularity (source rating count)</option><option value="imdb">IMDb rating</option><option value="metacritic">Metacritic score</option><option value="budget">Budget (USD)</option><option value="revenue">Revenue (USD)</option></select></label>
           <label>Order<select aria-label="Order" value={filters.order} onChange={(event) => setFilters((value) => ({ ...value, order: event.target.value as LibraryFilters['order'] }))}><option value="desc">Descending</option><option value="asc">Ascending</option></select></label>
           <button className="secondary-button" onClick={() => { setFilters(defaultFilters); setSearch('') }}>Clear</button>
         </div>
