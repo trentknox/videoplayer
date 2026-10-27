@@ -11,6 +11,13 @@ export interface MediaItem {
   externalId?: string
   title: string
   description?: string
+  contentType?: 'movie' | 'series' | 'episode'
+  genres?: string[]
+  countries?: string[]
+  year?: number
+  rating?: number
+  budgetUsd?: number
+  revenueUsd?: number
   poster?: string
   durationSeconds: number
   tags: string[]
@@ -57,7 +64,7 @@ export interface LibraryState {
   sources?: SavedSource[]
 }
 
-export interface CatalogJob { current?: string; pending: string[]; seen: string[] }
+export interface CatalogJob { current?: string; pending: string[]; seen: string[]; seriesNames?: Record<string, string> }
 export interface SavedSource { id: string; url: string; lastChecked?: string }
 
 export interface ImportDraft {
@@ -82,6 +89,14 @@ export interface AnalysisResult {
   title: string
   poster?: string
   description?: string
+  contentType?: 'movie' | 'series' | 'episode'
+  genres?: string[]
+  countries?: string[]
+  year?: number
+  rating?: number
+  budgetUsd?: number
+  revenueUsd?: number
+  actors?: string[]
   durationSeconds?: number
   notes?: string[]
   listings?: Array<{ url: string; title: string; poster?: string; season?: number; episode?: number }>

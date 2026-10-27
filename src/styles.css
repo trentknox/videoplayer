@@ -93,6 +93,9 @@ input:focus { border-color: #9b90ff; box-shadow: 0 0 0 3px rgba(155,144,255,.14)
 .empty-state { padding: 34px; border: 1px dashed rgba(255,255,255,.18); border-radius: 14px; color: #a9adc5; text-align: center; }
 .filter-summary { margin: -8px 0 16px; color: #8f94ad; font-size: .85rem; }
 .search-input { max-width: 340px; }
+.library-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 0 0 20px; }
+.library-filters label { display: grid; gap: 6px; color: #aebbd3; font-size: 13px; flex: 1 1 130px; }
+.library-filters select { width: 100%; min-height: 42px; color: #f5f6ff; background: #0d1120; border: 1px solid #344264; border-radius: 10px; padding: 8px; }
 
 .inline-form { display: flex; max-width: 680px; gap: 10px; margin: 0 0 24px; }
 .inline-form input { min-width: 0; }

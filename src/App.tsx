@@ -7,6 +7,8 @@ import { scanCatalog } from './catalogScan'
 import { advanceCatalogJob } from './catalogJob'
 import { movePlaylistItem } from './playlist'
 import { dueSource } from './sources'
+import { defaultFilters, filterLibrary } from './filters'
+import type { LibraryFilters } from './filters'
 import { formatClock, makeSchedule, nowPlaying } from './scheduler'
 import type { AnalysisResult, Channel, ImportDraft, LibraryState, MediaItem, Playlist } from './types'
 
@@ -65,6 +67,13 @@ function toMediaItem(analysis: AnalysisResult, draft: ImportDraft, pageAnalysis:
     externalId: analysis.externalId,
     title: draft.title.trim() || analysis.title,
     description: analysis.description,
+    contentType: analysis.contentType ?? (draft.episode ? 'episode' : undefined),
+    genres: analysis.genres,
+    countries: analysis.countries,
+    year: analysis.year,
+    rating: analysis.rating,
+    budgetUsd: analysis.budgetUsd,
+    revenueUsd: analysis.revenueUsd,
     poster: analysis.poster,
     durationSeconds: draft.durationMinutes ? Number(draft.durationMinutes) * 60 : analysis.durationSeconds ?? 900,
     tags: splitList(draft.tags),
@@ -72,7 +81,7 @@ function toMediaItem(analysis: AnalysisResult, draft: ImportDraft, pageAnalysis:
     series: draft.series.trim() || undefined,
     season: draft.season ? Number(draft.season) : undefined,
     episode: draft.episode ? Number(draft.episode) : undefined,
-    actors: splitList(draft.actors),
+    actors: [...new Set([...splitList(draft.actors), ...(analysis.actors ?? [])])],
     addedAt: new Date().toISOString(),
     importMode: pageAnalysis ? 'page-analysis' : analysis.kind === 'playlist' ? 'playlist' : analysis.kind === 'channel' ? 'channel' : analysis.kind === 'catalog' ? 'catalog' : 'single',
   }
@@ -94,6 +103,7 @@ export default function App() {
   const [catalogSections, setCatalogSections] = useState<Array<{ url: string; title: string }>>([])
   const [notice, setNotice] = useState('')
   const [search, setSearch] = useState('')
+  const [filters, setFilters] = useState<LibraryFilters>(defaultFilters)
   const [playlistName, setPlaylistName] = useState('')
   const [channelName, setChannelName] = useState('')
   const [channelFilter, setChannelFilter] = useState('')
@@ -136,11 +146,8 @@ export default function App() {
   const activePlaylist = library?.playlists.find((playlist) => playlist.id === activePlaylistId)
   const visibleMedia = useMemo(() => {
     if (!library) return []
-    const needle = search.trim().toLowerCase()
-    if (!needle) return library.media
-    return library.media.filter((item) => [item.title, item.provider, item.franchise, item.series, item.season, item.episode, ...item.tags, ...item.actors]
-      .filter(Boolean).join(' ').toLowerCase().includes(needle))
-  }, [library, search])
+    return filterLibrary(library.media, { ...filters, query: search })
+  }, [library, search, filters])
 
   const allSchedules = useMemo(() => {
     if (!library) return new Map<string, ReturnType<typeof makeSchedule>>()
@@ -253,20 +260,22 @@ export default function App() {
         if (!listings.length) emptyCursors.add(start)
         else emptyCursors.clear()
         const entries: MediaItem[] = []
+        const nestedSeries: Array<{ url: string; series: string }> = []
         for (let offset = 0; offset < listings.length; offset += 3) {
           const batch = listings.slice(offset, offset + 3)
           const analyzed = await Promise.all(batch.map(async (listing) => {
             try {
               const result = await analyzePublicPage(listing.url)
-              return toMediaItem({ ...result, title: result.title === new URL(listing.url).hostname ? listing.title : result.title, poster: result.poster ?? listing.poster }, { ...blankDraft, tags: importDraft.tags, series: importDraft.series, season: listing.season?.toString() ?? importDraft.season, episode: listing.episode?.toString() ?? importDraft.episode }, true)
+              if (result.listings?.some((entry) => entry.season !== undefined && entry.episode !== undefined)) nestedSeries.push({ url: listing.url, series: listing.title })
+              return toMediaItem({ ...result, title: result.title === new URL(listing.url).hostname ? listing.title : result.title, poster: result.poster ?? listing.poster }, { ...blankDraft, tags: importDraft.tags, series: importDraft.series || job.seriesNames?.[start!] || '', season: listing.season?.toString() ?? importDraft.season, episode: listing.episode?.toString() ?? importDraft.episode }, true)
             } catch {
-              return toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster }, { ...blankDraft, tags: importDraft.tags, series: importDraft.series, season: listing.season?.toString() ?? importDraft.season, episode: listing.episode?.toString() ?? importDraft.episode }, true)
+              return toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster }, { ...blankDraft, tags: importDraft.tags, series: importDraft.series || job.seriesNames?.[start!] || '', season: listing.season?.toString() ?? importDraft.season, episode: listing.episode?.toString() ?? importDraft.episode }, true)
             }
           }))
           entries.push(...analyzed)
         }
         for (const item of entries) known.add(item.sourceUrl)
-        job = advanceCatalogJob(source, job, cursor, sections)
+        job = advanceCatalogJob(source, job, cursor, [...sections, ...nestedSeries])
         const savedJob = job
         updateLibrary((current) => {
           const existing = new Set(current.media.map((item) => item.sourceUrl))
@@ -309,6 +318,25 @@ export default function App() {
       playlists: current.playlists.map((playlist) => ({ ...playlist, mediaIds: playlist.mediaIds.filter((mediaId) => mediaId !== id) })),
     }))
     if (activeId === id) setActiveId(undefined)
+  }
+
+  function playFromLibrary(id: string): void {
+    const item = library?.media.find((entry) => entry.id === id)
+    setActiveChannelId(undefined)
+    setActivePlaylistId(undefined)
+    setActiveId(id)
+    setView('home')
+    if (!item) return
+    let needsRefresh = item.kind === 'catalog'
+    try { needsRefresh ||= new URL(item.sourceUrl).hostname.toLowerCase() === '1movies.stream' } catch { /* Invalid links remain saved. */ }
+    if (!needsRefresh) return
+    setNotice('Checking for an available player…')
+    void analyzePublicPage(item.sourceUrl).then((result) => {
+      if (result.kind !== 'video' || result.analysisUnavailable) { setNotice('No player was found for this title.'); return }
+      updateLibrary((current) => ({ ...current, media: current.media.map((entry) => entry.id === id
+        ? { ...entry, provider: result.provider, kind: result.kind, embedUrl: result.embedUrl, playerOptions: result.playerOptions, contentType: result.contentType ?? entry.contentType, genres: result.genres?.length ? result.genres : entry.genres, countries: result.countries?.length ? result.countries : entry.countries, year: result.year ?? entry.year, rating: result.rating ?? entry.rating, budgetUsd: result.budgetUsd ?? entry.budgetUsd, revenueUsd: result.revenueUsd ?? entry.revenueUsd, actors: [...new Set([...entry.actors, ...(result.actors ?? [])])] } : entry) }))
+      setNotice('Player refreshed. Playback depends on the provider.')
+    }).catch(() => setNotice('Could not refresh this player.'))
   }
 
   function addToWatchLater(id: string): void {
@@ -461,14 +489,23 @@ export default function App() {
 
         <section className="content-section">
           <div className="section-heading"><div><span className="section-eyebrow">YOUR LIBRARY</span><h2>Continue watching</h2></div><button className="text-button" onClick={() => setView('library')}>Open library →</button></div>
-          <MediaGrid media={library.media.slice(0, 6)} activeId={activeId} onPlay={(id) => { setActiveChannelId(undefined); setActivePlaylistId(undefined); setActiveId(id); setView('home') }} onRemove={removeMedia} />
+          <MediaGrid media={library.media.slice(0, 6)} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} />
         </section>
       </>}
 
       {view === 'library' && <section className="content-section library-view">
         <div className="section-heading"><div><span className="section-eyebrow">PRIVATE CATALOG</span><h1>Library</h1></div><input className="search-input" placeholder="Search title, actor, franchise, tag…" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
+        <div className="library-filters">
+          <label>Type<select value={filters.type} onChange={(event) => setFilters((value) => ({ ...value, type: event.target.value }))}><option value="">All types</option><option value="movie">Movies</option><option value="series">Series</option><option value="episode">Episodes</option></select></label>
+          <label>Genre<select aria-label="Genre" value={filters.genre} onChange={(event) => setFilters((value) => ({ ...value, genre: event.target.value }))}><option value="">All genres</option>{[...new Set(library.media.flatMap((item) => item.genres ?? []))].sort().map((genre) => <option key={genre}>{genre}</option>)}</select></label>
+          <label>Country<select value={filters.country} onChange={(event) => setFilters((value) => ({ ...value, country: event.target.value }))}><option value="">All countries</option>{[...new Set(library.media.flatMap((item) => item.countries ?? []))].sort().map((country) => <option key={country}>{country}</option>)}</select></label>
+          <label>Year<select value={filters.year} onChange={(event) => setFilters((value) => ({ ...value, year: event.target.value }))}><option value="">All years</option>{[...new Set(library.media.flatMap((item) => item.year ? [item.year] : []))].sort((a, b) => b - a).map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
+          <label>Sort<select value={filters.sort} onChange={(event) => setFilters((value) => ({ ...value, sort: event.target.value as LibraryFilters['sort'] }))}><option value="added">Date added</option><option value="title">Title</option><option value="year">Year</option><option value="rating">Source rating</option><option value="budget">Budget (USD)</option><option value="revenue">Revenue (USD)</option></select></label>
+          <label>Order<select value={filters.order} onChange={(event) => setFilters((value) => ({ ...value, order: event.target.value as LibraryFilters['order'] }))}><option value="desc">Descending</option><option value="asc">Ascending</option></select></label>
+          <button className="secondary-button" onClick={() => { setFilters(defaultFilters); setSearch('') }}>Clear</button>
+        </div>
         <div className="filter-summary">{visibleMedia.length} item{visibleMedia.length === 1 ? '' : 's'} · Stored in this browser</div>
-        <MediaGrid media={visibleMedia} activeId={activeId} onPlay={(id) => { setActiveChannelId(undefined); setActivePlaylistId(undefined); setActiveId(id); setView('home') }} onRemove={removeMedia} />
+        <MediaGrid media={visibleMedia} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} />
       </section>}
 
       {view === 'playlists' && <section className="content-section">

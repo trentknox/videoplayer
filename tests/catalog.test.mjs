@@ -78,6 +78,31 @@ test('public play action yields an embed without accepting private player addres
   } finally { globalThis.fetch = originalFetch }
 })
 
+test('movie pages use the public movie player action and extract structured filtering metadata', async () => {
+  const originalFetch = globalThis.fetch
+  let posted
+  globalThis.fetch = async (_url, options) => {
+    if (options.method === 'POST') {
+      posted = options.body
+      return new Response(JSON.stringify([{ name: 'Primary', link: 'https://player.example/embed/movie' }]))
+    }
+    return new Response(`<div id="main-wrapper" data-token="public-id"></div><script type="application/ld+json">{"@type":"Movie","datePublished":"2024-01-01","genre":["Drama","Action"],"countryOfOrigin":{"name":"Canada"},"actor":[{"name":"Actor One"}],"aggregateRating":{"ratingValue":"8","bestRating":"10"},"budget":{"value":100,"currency":"USD"}}</script>`, { headers: { 'content-type': 'text/html' } })
+  }
+  try {
+    const request = new Request('https://app.example/api/analyze', { method: 'POST', body: JSON.stringify({ url: 'https://1movies.stream/watch-movie/example/' }) })
+    const result = await (await onRequestPost({ request })).json()
+    assert.equal(posted.get('players'), 'public-id')
+    assert.equal(result.embedUrl, 'https://player.example/embed/movie')
+    assert.equal(result.contentType, 'movie')
+    assert.deepEqual(result.genres, ['Drama', 'Action'])
+    assert.deepEqual(result.countries, ['Canada'])
+    assert.deepEqual(result.actors, ['Actor One'])
+    assert.equal(result.year, 2024)
+    assert.equal(result.rating, 8)
+    assert.equal(result.budgetUsd, 100)
+  } finally { globalThis.fetch = originalFetch }
+})
+
 test('large listing pages remain discoverable across successive import batches', async () => {
   const originalFetch = globalThis.fetch
   const html = Array.from({ length: 225 }, (_, i) => `<a href="/films/${i}" title="Film ${i}"><img src="/poster.jpg"></a>`).join('')

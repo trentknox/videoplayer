@@ -9,17 +9,30 @@ try {
   await page.route('**/api/analyze', async (route) => {
     const requested = route.request().postDataJSON().url
     const section = new URL(requested).pathname
+    if (section === '/watch-series/example') {
+      await route.fulfill({ json: { provider: 'embed', kind: 'catalog', sourceUrl: requested, embedUrl: requested, title: 'Example Series', contentType: 'series', genres: ['Drama'], countries: ['Canada'], year: 2024, rating: 8, listings: [{ url: 'https://catalog.example/episode/example/s01-e01', title: 'Episode One', season: 1, episode: 1 }] } })
+      return
+    }
+    if (section.startsWith('/episode/')) {
+      await route.fulfill({ json: { provider: 'embed', kind: 'catalog', sourceUrl: requested, embedUrl: requested, title: 'Episode One', listings: [] } })
+      return
+    }
     const first = section === '/movies' ? 30 : section === '/shows' ? 32 : section === '/new' ? 34 : 0
     const count = section === '/' ? 30 : 2
     const listings = Array.from({ length: count }, (_, i) => ({ url: `https://media.example/film-${first + i}.mp4`, title: `Film ${first + i}` }))
+    if (section === '/') listings.push({ url: 'https://catalog.example/watch-series/example', title: 'Example Series' })
     const catalogSections = [{ url: 'https://catalog.example/movies', title: 'Movies' }, { url: 'https://catalog.example/shows', title: 'TV Shows' }]
     await route.fulfill({ json: { provider: 'embed', kind: 'catalog', sourceUrl: requested, embedUrl: requested, title: 'Catalog', listings, catalogSections } })
   })
   await page.goto('http://127.0.0.1:4181/', { waitUntil: 'domcontentloaded' })
   await page.getByLabel('Source URL').fill('https://catalog.example/')
   await page.getByRole('button', { name: 'Import titles listed on this page' }).click()
-  await page.getByRole('status').getByText(/Added 34 titles\. Scan complete/).waitFor({ timeout: 30000 })
-  assert.match(await page.locator('.filter-summary').innerText(), /^35 items/)
+  await page.getByRole('status').getByText(/Added 36 titles\. Scan complete/).waitFor({ timeout: 30000 })
+  assert.match(await page.locator('.filter-summary').innerText(), /^37 items/)
+  await page.getByRole('button', { name: 'Play Episode One' }).waitFor()
+  await page.getByLabel('Genre', { exact: true }).selectOption({ label: 'Drama' })
+  assert.match(await page.locator('.filter-summary').innerText(), /^1 item/)
+  await page.getByRole('button', { name: 'Clear', exact: true }).click()
   await page.getByRole('button', { name: 'playlists', exact: true }).click()
   await page.getByPlaceholder('New playlist name').fill('Test trilogy')
   await page.getByRole('button', { name: 'Create playlist' }).click()

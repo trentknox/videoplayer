@@ -136,6 +136,47 @@ function structuredVideo(html: string, base: URL): StructuredVideo {
   return {}
 }
 
+function catalogMetadata(html: string): { contentType?: 'movie' | 'series' | 'episode'; genres?: string[]; countries?: string[]; year?: number; actors?: string[]; rating?: number; budgetUsd?: number; revenueUsd?: number } {
+  const find = (value: unknown, depth = 0): Record<string, unknown> | undefined => {
+    if (!value || depth > 6) return undefined
+    if (Array.isArray(value)) { for (const entry of value) { const found = find(entry, depth + 1); if (found) return found } return undefined }
+    if (typeof value !== 'object') return undefined
+    const record = value as Record<string, unknown>
+    const types = Array.isArray(record['@type']) ? record['@type'] : [record['@type']]
+    if (types.some((type) => ['Movie', 'TVSeries', 'TVEpisode'].includes(String(type)))) return record
+    for (const key of ['@graph', 'mainEntity', 'itemListElement']) { const found = find(record[key], depth + 1); if (found) return found }
+    return undefined
+  }
+  const names = (value: unknown): string[] => (Array.isArray(value) ? value : value ? [value] : []).map((entry) => typeof entry === 'string' ? entry : entry && typeof entry === 'object' ? textField((entry as Record<string, unknown>).name) : undefined).filter((entry): entry is string => Boolean(entry)).map((entry) => entry.trim().slice(0, 120)).filter(Boolean).slice(0, 30)
+  for (const script of html.matchAll(/<script[^>]+type=["']application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      const record = find(JSON.parse(script[1]))
+      if (!record) continue
+      const types = Array.isArray(record['@type']) ? record['@type'] : [record['@type']]
+      const date = textField(record.datePublished)
+      const match = date?.match(/^(\d{4})/)
+      const ratingRecord = record.aggregateRating && typeof record.aggregateRating === 'object' ? record.aggregateRating as Record<string, unknown> : undefined
+      const rating = Number(ratingRecord?.ratingValue)
+      const maximum = Number(ratingRecord?.bestRating ?? 10)
+      const usd = (value: unknown): number | undefined => {
+        if (!value || typeof value !== 'object') return undefined
+        const amount = value as Record<string, unknown>
+        const currency = String(amount.currency ?? amount.priceCurrency ?? '').toUpperCase()
+        const number = Number(amount.value ?? amount.price)
+        return currency === 'USD' && Number.isFinite(number) && number >= 0 ? number : undefined
+      }
+      return {
+        contentType: types.includes('Movie') ? 'movie' : types.includes('TVSeries') ? 'series' : 'episode',
+        genres: names(record.genre), countries: names(record.countryOfOrigin), actors: names(record.actor ?? record.actors),
+        year: match ? Number(match[1]) : undefined,
+        rating: Number.isFinite(rating) && Number.isFinite(maximum) && maximum > 0 && rating >= 0 && rating <= maximum ? rating / maximum * 10 : undefined,
+        budgetUsd: usd(record.budget), revenueUsd: usd(record.boxOffice ?? record.revenue),
+      }
+    } catch { /* Ignore malformed structured data. */ }
+  }
+  return {}
+}
+
 async function readLimited(response: Response): Promise<string> {
   if (!response.body) return ''
   const reader = response.body.getReader()
@@ -182,11 +223,13 @@ function publicCandidate(html: string, base: URL): StructuredVideo {
 // This site's normal public play action uses a page-provided identifier to request player URLs.
 async function discoverSitePlayers(html: string, base: URL): Promise<Array<{ name: string; url: string }>> {
   if (base.hostname.toLowerCase() !== '1movies.stream') return []
-  const tag = html.match(/<[^>]*\bid=["']series-player["'][^>]*>/i)?.[0]
+  const seriesTag = html.match(/<[^>]*\bid=["']series-player["'][^>]*>/i)?.[0]
+  const movieTag = html.match(/<[^>]*\bid=["']main-wrapper["'][^>]*>/i)?.[0]
+  const tag = seriesTag ?? movieTag
   const token = tag?.match(/\bdata-token=["']([^"']{1,4096})["']/i)?.[1]
   if (!token) return []
   try {
-    const body = new URLSearchParams({ players_show: decodeEntities(token) })
+    const body = new URLSearchParams({ [seriesTag ? 'players_show' : 'players']: decodeEntities(token) })
     const response = await fetch(new URL('/ajax/ajax.php', base), { method: 'POST', body, redirect: 'manual', signal: AbortSignal.timeout(8000) })
     if (!response.ok) return []
     const raw = (await readLimited(response)).slice(0, 65536)
@@ -339,6 +382,7 @@ export const onRequestPost = async ({ request }: AnalyzeContext): Promise<Respon
     title,
     poster,
     description,
+    ...catalogMetadata(html),
     durationSeconds: 900,
     listings: discoverListings(html, finalUrl),
     catalogSections: discoverCatalogSections(html, finalUrl),

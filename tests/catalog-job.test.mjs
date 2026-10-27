@@ -16,3 +16,11 @@ test('catalog sections are queued once and followed after pagination finishes', 
   job = advanceCatalogJob(root, job, undefined, sections)
   assert.equal(job.current, undefined)
 })
+
+test('series names and more than one hundred sections survive a paused scan', () => {
+  const root = 'https://example.com/'
+  const sections = Array.from({ length: 125 }, (_, i) => ({ url: `https://example.com/show/${i}`, series: `Series ${i}` }))
+  const job = advanceCatalogJob(root, { current: root, pending: [], seen: [root] }, root, sections)
+  assert.equal(job.pending.length, 125)
+  assert.equal(job.seriesNames['https://example.com/show/124'], 'Series 124')
+})
