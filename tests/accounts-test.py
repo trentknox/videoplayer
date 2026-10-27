@@ -19,6 +19,15 @@ class AccountsTest(unittest.TestCase):
         assert self.directory.parent == HERE
         self.temp.cleanup()
 
+    def test_large_library_can_sync(self):
+        self.accounts.create_account('large-library', 'strong-password')
+        token = self.accounts.login_owner('large-library', 'strong-password')
+        state = {'media': [{'id': 'large', 'description': 'x' * (9 * 1024 * 1024)}], 'playlists': [], 'channels': []}
+        self.assertEqual(self.accounts.write_library(token, 0, state), 1)
+        revision, restored = self.accounts.read_library(token)
+        self.assertEqual(revision, 1)
+        self.assertEqual(len(restored['media'][0]['description']), 9 * 1024 * 1024)
+
     def test_account_isolation_profiles_and_conflicts(self):
         self.accounts.create_account('family', 'strong-password')
         self.accounts.create_account('other', 'other-password')

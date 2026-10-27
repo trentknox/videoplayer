@@ -55,7 +55,7 @@ async function call<T>(session: AiSession, method: 'GET' | 'PUT', body?: unknown
   if (payload && new Blob([payload]).size > 32 * 1024 * 1024) throw new Error('This library exceeds the current 32 MiB sync limit. Your local library has not been sent; export a backup from Settings.')
   let response: Response
   try {
-    response = await fetch(`${session.endpoint}/v1/state`, { method, redirect: 'error', credentials: 'omit', headers: { Authorization: `Bearer ${session.token}`, ...(payload ? { 'Content-Type': 'application/json' } : {}) }, body: payload, signal: AbortSignal.timeout(20000) })
+    response = await fetch(`${session.endpoint}/v1/state`, { method, redirect: 'error', credentials: 'omit', headers: { Authorization: `Bearer ${session.token}`, ...(payload ? { 'Content-Type': 'application/json' } : {}) }, body: payload, signal: AbortSignal.timeout(60000) })
   } catch {
     throw new Error(session.endpoint.startsWith('http://127.0.0.1') || session.endpoint.startsWith('http://localhost') ? 'Cannot reach the private gateway. Check the SSH tunnel and allow local-network access for Vivid in Edge, then retry.' : 'Cannot reach the private gateway. Check its connection and retry.')
   }

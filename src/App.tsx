@@ -346,7 +346,7 @@ export default function App() {
       if (!sync.halted) setSyncStatus('Private library synced')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Private library sync failed.'
-      if (/Conflicting|Unlock server playlists|Invalid or duplicate IDs/.test(message)) sync.halted = true
+      if (!message.includes('server changed during sync')) sync.halted = true
       setSyncStatus(message)
     } finally { sync.busy = false }
   }
