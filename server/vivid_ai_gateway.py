@@ -82,7 +82,7 @@ class Handler(BaseHTTPRequestHandler):
         token = self.authorized()
         if not token: return self.send_json(403, {'error': 'unauthorized'})
         try:
-            data = self.read_json(8 * 1024 * 1024)
+            data = self.read_json(32 * 1024 * 1024)
             state = data.get('state')
             if not isinstance(data.get('revision'), int) or not isinstance(state, dict) or any(not isinstance(state.get(key), list) for key in ('media', 'playlists', 'channels')):
                 return self.send_json(400, {'error': 'invalid_state'})

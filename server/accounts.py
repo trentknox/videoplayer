@@ -247,7 +247,7 @@ class Accounts:
                 state['channels'].insert(0, {'id': channel_id, 'name': playlist['name'], 'description': 'Loops this playlist in order.', 'accent': '#8a7dff', 'filter': '', 'anchor': datetime.now(timezone.utc).isoformat(), 'durationHours': 24, 'playlistId': playlist_id})
                 result = {'id': channel_id}
             serialized = json.dumps(state, separators=(',', ':'))
-            if len(serialized.encode('utf-8')) > 8 * 1024 * 1024: raise ValueError('state too large')
+            if len(serialized.encode('utf-8')) > 32 * 1024 * 1024: raise ValueError('state too large')
             db.execute('INSERT OR REPLACE INTO libraries VALUES (?,?,?)', (account_id, revision + 1, serialized))
             return {**result, 'revision': revision + 1}
 
@@ -310,7 +310,7 @@ class Accounts:
                 preserved = {p['id']: p for p in original.get('playlists', []) if p.get('id') in hidden}
                 state = {**state, 'playlists': [preserved.get(p.get('id'), p) for p in state['playlists']] + [p for key, p in preserved.items() if all(x.get('id') != key for x in state['playlists'])]}
             serialized = json.dumps(state, separators=(',', ':'))
-            if len(serialized.encode('utf-8')) > 8 * 1024 * 1024: raise ValueError('state too large')
+            if len(serialized.encode('utf-8')) > 32 * 1024 * 1024: raise ValueError('state too large')
             new_revision = current + 1
             db.execute('INSERT OR REPLACE INTO libraries VALUES (?,?,?)', (session[0], new_revision, serialized))
             return new_revision

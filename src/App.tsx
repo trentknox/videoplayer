@@ -768,8 +768,12 @@ export default function App() {
     const channel: Channel = { id: makeId('channel'), name: playlist.name, description: `Loops the ${playlist.name} playlist in order.`, filter: '', accent: accents[library.channels.length % accents.length], anchor: new Date().toISOString(), durationHours: 24, playlistId: playlist.id }
     updateLibrary((current) => ({ ...current, channels: [channel, ...current.channels] }))
     setClock(new Date())
-    setNotice(`${playlist.name} is now a looping channel. Changes to the playlist update its schedule.`)
-    setView('channels')
+    const first = playlist.mediaIds.find((id) => library.media.some((item) => item.id === id))
+    if (first) {
+      setActiveId(first); setActivePlaylistId(undefined); setActiveChannelId(channel.id)
+      setPlayerEngaged(true); setShouldAutoPlay(true); setMinimizedPlayer(false); setView('player')
+    }
+    setNotice(`${playlist.name} channel created. Its queue follows the playlist order.`)
   }
 
   function createChannel(event: FormEvent<HTMLFormElement>): void {
@@ -784,7 +788,12 @@ export default function App() {
     setClock(new Date())
     setChannelName('')
     setChannelFilter('')
-    setNotice(`${name} is now scheduled as a 24-hour virtual channel.`)
+    const slot = library ? nowPlaying(makeSchedule(channel, library.media, new Date(), library.playlists)) : undefined
+    if (slot) {
+      setActiveId(slot.mediaId); setActivePlaylistId(undefined); setActiveChannelId(channel.id)
+      setPlayerEngaged(true); setShouldAutoPlay(true); setMinimizedPlayer(false); setView('player')
+      setNotice(`${name} channel created and ready to play.`)
+    } else setNotice(`${name} channel created. Add titles matching its filter to start it.`)
   }
 
   function playChannel(channel: Channel): void {

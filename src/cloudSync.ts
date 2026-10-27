@@ -52,7 +52,7 @@ export function applyShared(local: LibraryState, shared: SharedLibrary): Library
 
 async function call<T>(session: AiSession, method: 'GET' | 'PUT', body?: unknown): Promise<T> {
   const payload = body ? JSON.stringify(body) : undefined
-  if (payload && new Blob([payload]).size > 8 * 1024 * 1024) throw new Error('This library exceeds the current 8 MiB sync limit. Your local library has not been sent; export a backup from Settings.')
+  if (payload && new Blob([payload]).size > 32 * 1024 * 1024) throw new Error('This library exceeds the current 32 MiB sync limit. Your local library has not been sent; export a backup from Settings.')
   let response: Response
   try {
     response = await fetch(`${session.endpoint}/v1/state`, { method, redirect: 'error', credentials: 'omit', headers: { Authorization: `Bearer ${session.token}`, ...(payload ? { 'Content-Type': 'application/json' } : {}) }, body: payload, signal: AbortSignal.timeout(20000) })
