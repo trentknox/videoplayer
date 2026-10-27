@@ -51,7 +51,14 @@ export function applyShared(local: LibraryState, shared: SharedLibrary): Library
 }
 
 async function call<T>(session: AiSession, method: 'GET' | 'PUT', body?: unknown): Promise<T> {
-  const response = await fetch(`${session.endpoint}/v1/state`, { method, redirect: 'error', credentials: 'omit', headers: { Authorization: `Bearer ${session.token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000) })
+  const payload = body ? JSON.stringify(body) : undefined
+  if (payload && new Blob([payload]).size > 8 * 1024 * 1024) throw new Error('This library exceeds the current 8 MiB sync limit. Your local library has not been sent; export a backup from Settings.')
+  let response: Response
+  try {
+    response = await fetch(`${session.endpoint}/v1/state`, { method, redirect: 'error', credentials: 'omit', headers: { Authorization: `Bearer ${session.token}`, ...(payload ? { 'Content-Type': 'application/json' } : {}) }, body: payload, signal: AbortSignal.timeout(20000) })
+  } catch {
+    throw new Error(session.endpoint.startsWith('http://127.0.0.1') || session.endpoint.startsWith('http://localhost') ? 'Cannot reach the private gateway. Check the SSH tunnel and allow local-network access for Vivid in Edge, then retry.' : 'Cannot reach the private gateway. Check its connection and retry.')
+  }
   if (response.status === 409) throw new Error('The server changed during sync. Vivid will retry.')
   if (!response.ok) throw new Error(response.status === 403 ? 'Private library session expired or cannot sync.' : `Private library unavailable (HTTP ${response.status}).`)
   return response.json() as Promise<T>

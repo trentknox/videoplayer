@@ -297,6 +297,24 @@ function discoverListings(html: string, base: URL): Array<{ url: string; title: 
   return items
 }
 
+function discoverSearchForm(html: string, base: URL): { url: string; parameter: string } | undefined {
+  const attribute = (tag: string, name: string) => tag.match(new RegExp(`(?:^|\\s)${name}\\s*=\\s*["']([^"']+)["']`, 'i'))?.[1]
+  for (const match of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form\s*>/gi)) {
+    const method = (attribute(match[1], 'method') ?? 'get').toLowerCase()
+    if (method !== 'get') continue
+    const action = toPublicUrl(decodeEntities(attribute(match[1], 'action') ?? base.href), base)
+    if (!action) continue
+    const url = new URL(action)
+    if (url.origin !== base.origin || url.username || url.password) continue
+    for (const input of match[2].matchAll(/<input\b([^>]*)>/gi)) {
+      const name = attribute(input[1], 'name')
+      const type = (attribute(input[1], 'type') ?? 'text').toLowerCase()
+      if (name && /^(?:q|query|keyword|search|search_query)$/i.test(name) && ['text', 'search'].includes(type)) return { url: url.href, parameter: name }
+    }
+  }
+  return undefined
+}
+
 function discoverCatalogPage(html: string, base: URL): string | undefined {
   const anchors = html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi)
   for (const match of anchors) {
@@ -407,6 +425,7 @@ export const onRequestPost = async ({ request }: AnalyzeContext): Promise<Respon
     durationSeconds: 900,
     listings: discoverListings(html, finalUrl),
     catalogSections: discoverCatalogSections(html, finalUrl),
+    searchForm: discoverSearchForm(html, finalUrl),
     suggestedCatalogUrl: discoverCatalogPage(html, finalUrl),
     nextCatalogUrl: discoverNextPage(html, finalUrl),
     notes: [embedUrl

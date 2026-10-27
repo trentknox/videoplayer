@@ -189,3 +189,13 @@ input:focus { border-color: #9b90ff; box-shadow: 0 0 0 3px rgba(155,144,255,.14)
 .bot-token-reveal { margin: 15px 0; padding: 12px; border: 1px solid #7771b1; border-radius: 10px; }
 .bot-token-reveal input { width: min(100%, 560px); }
 .bot-token-row { display: flex; gap: 12px; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #39405c; }
+
+/* The AI action sits within the centered search field. */
+.home-search { position: relative; display: block; width: min(100%, 920px); margin: 20px auto 28px; }
+.home-search input { width: 100%; min-height: 64px; padding: 16px 116px 16px 20px; }
+.home-search-action { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); border: 0; border-radius: 9px; padding: 10px 12px; background: rgba(172, 157, 255, .12); color: #d6ccff; cursor: pointer; font-weight: 600; }
+.home-search-action:hover { background: rgba(172, 157, 255, .24); }
+.home-search-action:disabled { opacity: .6; cursor: wait; }
+.import-card > summary, .import-advanced > summary { cursor: pointer; color: #edeaff; font-weight: 650; }
+.import-advanced { display: grid; gap: 12px; }
+.import-advanced[open] > summary { margin-bottom: 14px; }

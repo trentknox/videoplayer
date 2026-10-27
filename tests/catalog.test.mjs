@@ -174,3 +174,13 @@ test('catalog poster sibling is associated with its overlay link', async () => {
     assert.equal(result.listings[0].poster, 'https://images.example/poster.webp')
   } finally { globalThis.fetch = originalFetch }
 })
+
+test('detects a same-origin public GET keyword search form and ignores unsafe forms', async () => {
+  const originalFetch = globalThis.fetch
+  try {
+    globalThis.fetch = async () => new Response(`<form action="https://other.example/search"><input name="q"></form><form action="/search" method="post"><input name="keyword"></form><form action="/search"><input type="text" name="keyword"></form>`, { headers: { 'content-type': 'text/html' } })
+    const request = new Request('https://app.example/api/analyze', { method: 'POST', body: JSON.stringify({ url: 'https://catalog.example/' }) })
+    const result = await (await onRequestPost({ request })).json()
+    assert.deepEqual(result.searchForm, { url: 'https://catalog.example/search', parameter: 'keyword' })
+  } finally { globalThis.fetch = originalFetch }
+})

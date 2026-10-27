@@ -111,6 +111,7 @@ export interface AnalysisResult {
   notes?: string[]
   listings?: Array<{ url: string; title: string; poster?: string; year?: number; season?: number; episode?: number }>
   catalogSections?: Array<{ url: string; title: string }>
+  searchForm?: { url: string; parameter: string }
   suggestedCatalogUrl?: string
   nextCatalogUrl?: string
   analysisUnavailable?: boolean

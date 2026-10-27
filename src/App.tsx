@@ -7,7 +7,7 @@ import { scanCatalog } from './catalogScan'
 import { advanceCatalogJob } from './catalogJob'
 import { movePlaylistItem } from './playlist'
 import { dueSource } from './sources'
-import { defaultFilters, filterLibrary } from './filters'
+import { defaultFilters, filterLibrary, mediaYear } from './filters'
 import { adjacentChannel } from './channelNavigation'
 import { startUpdateMonitor } from './updateMonitor'
 import { posterSources } from './posters'
@@ -18,6 +18,7 @@ import { applyShared, getRemoteLibrary, mergeShared, putRemoteLibrary, sharedLib
 import type { SharedLibrary } from './cloudSync'
 import { aiLogin, aiLogout, searchWithAi, searchByKeywords } from './aiSearch'
 import { discoverForSearch } from './searchSources'
+import { searchPublicSources } from './publicSearch'
 import type { AiSession, AiSearchResult } from './aiSearch'
 import type { LibraryFilters } from './filters'
 import { formatClock, makeSchedule, nowPlaying } from './scheduler'
@@ -157,13 +158,27 @@ export default function App() {
 
   useEffect(() => {
     try {
-      const saved = JSON.parse(window.sessionStorage.getItem('vivid-ai-session') || 'null') as AiSession | null
+      const saved = JSON.parse(window.localStorage.getItem('vivid-ai-session') || window.sessionStorage.getItem('vivid-ai-session') || 'null') as AiSession | null
       if (saved && typeof saved.endpoint === 'string' && typeof saved.token === 'string' && saved.token) {
+        try { if (!window.localStorage.getItem('vivid-ai-session')) window.localStorage.setItem('vivid-ai-session', JSON.stringify(saved)) } catch { /* This tab can still use its session. */ }
         setAiSession(saved)
         setGatewayAddress(saved.endpoint)
         void refreshBotTokens(saved)
       }
     } catch { /* A new sign-in is required if the session cannot be restored. */ }
+  }, [])
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== 'vivid-ai-session') return
+      if (!event.newValue) { setAiSession(undefined); setBotTokens([]); setNewBotToken(''); return }
+      try {
+        const saved = JSON.parse(event.newValue) as AiSession
+        if (typeof saved.endpoint === 'string' && typeof saved.token === 'string' && saved.token) { setAiSession(saved); setGatewayAddress(saved.endpoint); void refreshBotTokens(saved) }
+      } catch { /* Ignore malformed storage events. */ }
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
   }, [])
 
   useEffect(() => startUpdateMonitor(() => setUpdateAvailable(true), () => importingRef.current), [])
@@ -475,7 +490,7 @@ export default function App() {
     try {
       const session = await aiLogin(gatewayAddress, gatewayUser, gatewayPassword)
       setAiSession(session)
-      try { window.sessionStorage.setItem('vivid-ai-session', JSON.stringify(session)) } catch { /* Continue without refresh persistence. */ }
+      try { window.localStorage.setItem('vivid-ai-session', JSON.stringify(session)); window.sessionStorage.removeItem('vivid-ai-session') } catch { try { window.sessionStorage.setItem('vivid-ai-session', JSON.stringify(session)) } catch { /* Continue without persistence. */ } }
       setGatewayPassword('')
       void refreshBotTokens(session)
       setNotice('AI gateway connected for this session.')
@@ -520,27 +535,40 @@ export default function App() {
         } catch { /* Ignore invalid stored URLs. */ }
       }
       if (searchSources.length > 0) {
-        if (sourceSyncLock.current || importingRef.current) sourceStatus = ' A source scan is already running; search may be incomplete.'
+        setAiFeedback('Searching your sources directly…')
+        const direct = await searchPublicSources(searchSources, homeSearch, analyzePublicPage)
+        const known = new Set(media.map((item) => item.sourceUrl))
+        const entries = direct.listings.filter((listing) => !known.has(listing.url)).map((listing) => toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster, year: listing.year }, { ...blankDraft, url: listing.url, season: listing.season?.toString() ?? '', episode: listing.episode?.toString() ?? '' }, true))
+        if (entries.length) {
+          media = [...entries, ...media]
+          updateLibrary((current) => {
+            const existing = new Set(current.media.map((item) => item.sourceUrl))
+            return { ...current, media: [...entries.filter((item) => !existing.has(item.sourceUrl)), ...current.media] }
+          })
+        }
+        if (direct.searched) {
+          sourceStatus = ` Searched ${direct.searched} source${direct.searched === 1 ? '' : 's'} directly and found ${direct.listings.length} listed titles.${direct.incomplete ? ' Some source results may be incomplete.' : ''}`
+        } else if (sourceSyncLock.current || importingRef.current) sourceStatus = ' No public source search form was available; a background scan is still running.'
         else {
           sourceSyncLock.current = true
           setImporting(true)
           importingRef.current = true
           try {
-            setAiFeedback('Checking saved sources for more titles…')
+            setAiFeedback('Checking saved catalogs for more titles…')
             const discovered = await discoverForSearch(searchSources, media.map((item) => item.sourceUrl), library.catalogJobs ?? {}, analyzePublicPage)
-            const entries = discovered.listings.map((listing) => toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster, year: listing.year }, { ...blankDraft, url: listing.url, season: listing.season?.toString() ?? '', episode: listing.episode?.toString() ?? '' }, true))
-            media = [...entries, ...media]
+            const found = discovered.listings.map((listing) => toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster, year: listing.year }, { ...blankDraft, url: listing.url, season: listing.season?.toString() ?? '', episode: listing.episode?.toString() ?? '' }, true))
+            media = [...found, ...media]
             updateLibrary((current) => {
-              const known = new Set(current.media.map((item) => item.sourceUrl))
+              const existing = new Set(current.media.map((item) => item.sourceUrl))
               const jobs = { ...current.catalogJobs }
               for (const source of searchSources.slice(0, 3)) {
                 if (!source.id.startsWith('inferred-') && !current.sources?.some((entry) => entry.url === source.url)) continue
                 if (discovered.jobs[source.url]) jobs[source.url] = discovered.jobs[source.url]
                 else delete jobs[source.url]
               }
-              return { ...current, media: [...entries.filter((item) => !known.has(item.sourceUrl)), ...current.media], catalogJobs: jobs }
+              return { ...current, media: [...found.filter((item) => !existing.has(item.sourceUrl)), ...current.media], catalogJobs: jobs }
             })
-            sourceStatus = ` Checked saved sources and found ${entries.length} new titles.${discovered.incomplete ? ' Some sources are incomplete or unavailable; search again to continue.' : ''}`
+            sourceStatus = ` No public source search form was available; scanned catalogs and found ${found.length} new titles.${discovered.incomplete ? ' Some sources are incomplete or unavailable.' : ''}`
           } finally { sourceSyncLock.current = false; importingRef.current = false; setImporting(false) }
         }
       } else sourceStatus = ' No sources are saved yet; add one in Library to search beyond this collection.'
@@ -818,7 +846,7 @@ export default function App() {
       <>
         <section className="content-section home-gallery" hidden={view !== 'home'}>
           <div className="section-heading"><div><span className="section-eyebrow">YOUR MEDIA</span><h1>Find something to watch</h1><p>Describe what you want, or search your library by title, actor, genre, or series.</p></div></div>
-            <form className="home-search" onSubmit={askAi}><input aria-label="Search your library" value={homeSearch} onChange={(event) => setHomeSearch(event.target.value)} placeholder="Ask for a movie, playlist, or channel…" /><button className="primary-button" disabled={aiBusy}>{aiBusy ? 'Thinking…' : 'Ask AI'}</button><button type="button" className="secondary-button" onClick={() => { setSearch(homeSearch); setView('library') }}>Search library</button></form>
+            <form className="home-search" onSubmit={askAi}><input aria-label="Search your library" value={homeSearch} onChange={(event) => setHomeSearch(event.target.value)} placeholder="Ask for a movie, playlist, or channel…" /><button className="home-search-action" disabled={aiBusy}>{aiBusy ? 'Searching…' : 'Ask AI ↗'}</button></form>
           {aiDialogOpen && <div className="ai-dialog-backdrop" onClick={() => setAiDialogOpen(false)}><section className="ai-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-dialog-title" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === 'Escape') setAiDialogOpen(false) }}>
             <div className="ai-dialog-heading"><div><span className="section-eyebrow">AI SEARCH</span><h2 id="ai-dialog-title">{aiResult?.name ?? 'Your request'}</h2></div><button className="secondary-button" aria-label="Close search results" autoFocus onClick={() => setAiDialogOpen(false)}>×</button></div>
             <p className="ai-dialog-query">{homeSearch}</p><p role="status">{aiFeedback}</p>
@@ -857,12 +885,14 @@ export default function App() {
       </>
 
       {view === 'library' && <section className="content-section library-view">
-          <aside className="import-card">
+          <details className="import-card">
+            <summary>Universal importer</summary>
             <div className="section-eyebrow">UNIVERSAL IMPORTER</div>
             <h2>Paste a source. Build your world.</h2>
             <p>Single videos, playlists, channels, permitted public pages, direct streams, Plex sources, YouTube, Twitch, and Cloudflare Stream.</p>
             <form onSubmit={handleImport} className="import-form">
               <label>Source URL<input required type="url" placeholder="https://…" value={draft.url} onChange={(event) => updateDraft('url', event.target.value)} /></label>
+              <details className="import-advanced"><summary>Advanced options (optional)</summary>
               <label>Title override <span>optional</span><input placeholder="Autodetected when available" value={draft.title} onChange={(event) => updateDraft('title', event.target.value)} /></label>
               <div className="form-row">
                 <label>Tags<input placeholder="sci-fi, comedy" value={draft.tags} onChange={(event) => updateDraft('tags', event.target.value)} /></label>
@@ -878,6 +908,7 @@ export default function App() {
               </div>
               <label>Runtime in minutes <span>optional; used for channel scheduling</span><input type="number" min="1" max="1440" placeholder="15" value={draft.durationMinutes} onChange={(event) => updateDraft('durationMinutes', event.target.value)} /></label>
               <label className="checkbox-row"><input type="checkbox" checked={pageAnalysis} onChange={(event) => setPageAnalysis(event.target.checked)} /> Analyze permitted public-page metadata</label>
+              </details>
               <button className="primary-button" disabled={importing}>{importing ? 'Analyzing…' : 'Analyze & import'}</button>
               <button type="button" className="secondary-button" disabled={importing} onClick={() => void importPageListings()}>Import titles listed on this page</button>
               {scanningCatalog && <button type="button" className="secondary-button" onClick={() => { stopCatalogImport.current = true; setNotice('Stopping after the current batch…') }}>Stop catalog scan</button>}
@@ -885,18 +916,19 @@ export default function App() {
             {catalogSections.length > 0 && <div><p>More catalog sections found. Select one, then import its titles:</p>{catalogSections.map((section) => <button type="button" className="secondary-button" key={section.url} disabled={importing} onClick={() => updateDraft('url', section.url)}>{section.title}</button>)}</div>}
             <p className="fine-print">Vivid saves original source URLs. It does not copy, proxy, DRM-bypass, or rebroadcast media.</p>
             <p className="fine-print">When page analysis is enabled, the URL is sent to the Vivid analysis service.</p>
-          </aside>
+          </details>
         <div className="section-heading"><div><span className="section-eyebrow">PRIVATE CATALOG</span><h1>Library</h1></div><input className="search-input" placeholder="Search title, actor, franchise, tag…" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
         <div className="library-filters">
-          <label>Type<select value={filters.type} onChange={(event) => setFilters((value) => ({ ...value, type: event.target.value }))}><option value="">All types</option><option value="movie">Movies</option><option value="series">Series</option><option value="episode">Episodes</option></select></label>
+          <label>Type<select aria-label="Type" value={filters.type} onChange={(event) => setFilters((value) => ({ ...value, type: event.target.value }))}><option value="">All types</option><option value="movie">Movies</option><option value="series">Series</option><option value="episode">Episodes</option></select></label>
           <label>Genre<select aria-label="Genre" value={filters.genre} onChange={(event) => setFilters((value) => ({ ...value, genre: event.target.value }))}><option value="">All genres</option>{[...new Set(library.media.flatMap((item) => item.genres ?? []))].sort().map((genre) => <option key={genre}>{genre}</option>)}</select></label>
-          <label>Country<select value={filters.country} onChange={(event) => setFilters((value) => ({ ...value, country: event.target.value }))}><option value="">All countries</option>{[...new Set(library.media.flatMap((item) => item.countries ?? []))].sort().map((country) => <option key={country}>{country}</option>)}</select></label>
-          <label>Year<select value={filters.year} onChange={(event) => setFilters((value) => ({ ...value, year: event.target.value }))}><option value="">All years</option>{[...new Set(library.media.flatMap((item) => item.year ? [item.year] : []))].sort((a, b) => b - a).map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
-          <label>Sort<select value={filters.sort} onChange={(event) => setFilters((value) => ({ ...value, sort: event.target.value as LibraryFilters['sort'] }))}><option value="added">Date added</option><option value="title">Title</option><option value="year">Year</option><option value="rating">Source rating</option><option value="budget">Budget (USD)</option><option value="revenue">Revenue (USD)</option></select></label>
-          <label>Order<select value={filters.order} onChange={(event) => setFilters((value) => ({ ...value, order: event.target.value as LibraryFilters['order'] }))}><option value="desc">Descending</option><option value="asc">Ascending</option></select></label>
+          <label>Country<select aria-label="Country" value={filters.country} onChange={(event) => setFilters((value) => ({ ...value, country: event.target.value }))}><option value="">All countries</option>{[...new Set(library.media.flatMap((item) => item.countries ?? []))].sort().map((country) => <option key={country}>{country}</option>)}</select></label>
+          <label>Year<select aria-label="Year" value={filters.year} onChange={(event) => setFilters((value) => ({ ...value, year: event.target.value }))}><option value="">All years</option>{[...new Set(library.media.flatMap((item) => mediaYear(item) ? [mediaYear(item)!] : []))].sort((a, b) => b - a).map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
+          <label>Sort<select aria-label="Sort" value={filters.sort} onChange={(event) => setFilters((value) => ({ ...value, sort: event.target.value as LibraryFilters['sort'] }))}><option value="added">Date added</option><option value="title">Title</option><option value="year">Year</option><option value="rating">Source rating</option><option value="budget">Budget (USD)</option><option value="revenue">Revenue (USD)</option></select></label>
+          <label>Order<select aria-label="Order" value={filters.order} onChange={(event) => setFilters((value) => ({ ...value, order: event.target.value as LibraryFilters['order'] }))}><option value="desc">Descending</option><option value="asc">Ascending</option></select></label>
           <button className="secondary-button" onClick={() => { setFilters(defaultFilters); setSearch('') }}>Clear</button>
         </div>
         <button className="secondary-button" disabled={importing} onClick={() => void repairPosters(true)}>Refresh missing posters</button>
+        <p className="fine-print">Filters use the metadata available for each title; some sources do not provide genre, country, ratings, or financial details.</p>
         <div className="filter-summary">{visibleMedia.length} item{visibleMedia.length === 1 ? '' : 's'} · Stored in this browser</div>
         <MediaGrid media={visibleMedia} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} />
       </section>}
@@ -940,8 +972,8 @@ export default function App() {
 
       {view === 'settings' && <section className="content-section settings-view">
         <span className="section-eyebrow">DATA & PROVIDERS</span><h1>Your library stays yours.</h1>
-        <section className="content-section"><h2>Private AI gateway</h2><p>Connect your self-hosted Vivid gateway over HTTPS. Your password and session stay in memory on this device; reconnect after closing Vivid. AI search sends your request and selected library metadata to that gateway.</p>
-          {aiSession ? <><p>Connected for this session.</p><button className="secondary-button" onClick={() => { const session = aiSession; setAiSession(undefined); try { window.sessionStorage.removeItem('vivid-ai-session') } catch { /* Already disconnected locally. */ }; setAiResult(undefined); setBotTokens([]); setNewBotToken(''); void aiLogout(session).then(() => setNotice('AI gateway disconnected.')).catch(() => setNotice('Disconnected locally; the gateway session could not be revoked.')) }}>Disconnect AI</button></> : <form className="inline-form" onSubmit={connectAi}><input aria-label="AI gateway URL" placeholder="https://your-server.example" value={gatewayAddress} onChange={(event) => setGatewayAddress(event.target.value)} required /><input aria-label="AI account username" placeholder="Username" autoComplete="username" value={gatewayUser} onChange={(event) => setGatewayUser(event.target.value)} required /><input aria-label="AI account password" type="password" placeholder="Password" autoComplete="current-password" value={gatewayPassword} onChange={(event) => setGatewayPassword(event.target.value)} required /><button className="primary-button" disabled={aiBusy}>Connect AI</button></form>}
+        <section className="content-section"><h2>Private AI gateway</h2><p>Connect your self-hosted Vivid gateway over HTTPS. Your password is not saved. Your session stays in this browser profile until you sign out or it expires. AI search sends your request and selected library metadata to that gateway.</p>
+          {aiSession ? <><p>Connected for this session.</p><button className="secondary-button" onClick={() => { const session = aiSession; setAiSession(undefined); try { window.localStorage.removeItem('vivid-ai-session'); window.sessionStorage.removeItem('vivid-ai-session') } catch { /* Already disconnected locally. */ }; setAiResult(undefined); setBotTokens([]); setNewBotToken(''); void aiLogout(session).then(() => setNotice('AI gateway disconnected.')).catch(() => setNotice('Disconnected locally; the gateway session could not be revoked.')) }}>Disconnect AI</button></> : <form className="inline-form" onSubmit={connectAi}><input aria-label="AI gateway URL" placeholder="https://your-server.example" value={gatewayAddress} onChange={(event) => setGatewayAddress(event.target.value)} required /><input aria-label="AI account username" placeholder="Username" autoComplete="username" value={gatewayUser} onChange={(event) => setGatewayUser(event.target.value)} required /><input aria-label="AI account password" type="password" placeholder="Password" autoComplete="current-password" value={gatewayPassword} onChange={(event) => setGatewayPassword(event.target.value)} required /><button className="primary-button" disabled={aiBusy}>Connect AI</button></form>}
         </section>
         <section className="content-section"><h2>Private library sync</h2><p role="status">{syncStatus}</p><p>Your signed-in server library synchronizes while Vivid is open. If the same item changes on two devices, syncing stops instead of overwriting either copy. Export a local backup before resolving a conflict.</p>{aiSession && <button className="secondary-button" onClick={() => { if (syncRef.current) syncRef.current.halted = false; void synchronizeLibrary() }}>Retry sync</button>}</section>
         <section className="content-section"><h2>Agent access</h2><p>Create a separate token for an agent and choose what it can manage. Tokens expire after 30 days and can be revoked here. Bot access requires a connected Vivid server.</p>
@@ -995,14 +1027,15 @@ interface MediaGridProps {
 }
 
 function MediaGrid({ media, activeId, onPlay, onRemove }: MediaGridProps) {
+  const [limit, setLimit] = useState(96)
   if (!media.length) return <div className="empty-state">Nothing here yet. Import a source to start building your collection.</div>
-  return <div className="media-grid">{media.map((item) => <article key={item.id} className={`media-card ${item.id === activeId ? 'is-active' : ''} ${item.contentType === 'movie' || item.contentType === 'series' ? 'portrait-poster' : ''}`}>
+  return <><div className="media-grid">{media.slice(0, limit).map((item) => <article key={item.id} className={`media-card ${item.id === activeId ? 'is-active' : ''} ${item.contentType === 'movie' || item.contentType === 'series' ? 'portrait-poster' : ''}`}>
     <button className="card-play" onClick={() => onPlay(item.id)} aria-label={`Play ${item.title}`}>
       <PosterImage item={item} />
       <span className="play-circle">▶</span>
     </button>
     <div className="card-meta"><div><span className="provider-badge">{sourceGlyph(item.provider)} {providerLabel(item.provider)}</span><h3>{item.title}</h3><p>{item.franchise || item.series || item.tags.slice(0, 2).join(' · ') || item.kind}</p></div><button className="remove-button" onClick={() => onRemove(item.id)} aria-label={`Remove ${item.title}`}>×</button></div>
-  </article>)}</div>
+  </article>)}</div>{limit < media.length && <button className="secondary-button" onClick={() => setLimit((value) => value + 96)}>Show more ({Math.min(limit, media.length)} of {media.length})</button>}</>
 }
 
 function PosterImage({ item }: { item: MediaItem }) {
@@ -1014,12 +1047,14 @@ function PosterImage({ item }: { item: MediaItem }) {
 
 function PlaylistCard({ playlist, media, onPlay, onChange, onMove, onDelete, onCreateChannel, onRename }: { playlist: Playlist; media: MediaItem[]; onPlay: (id: string) => void; onChange: (id: string, add: boolean) => void; onMove: (id: string, direction: -1 | 1) => void; onDelete: () => void; onCreateChannel: () => void; onRename: (name: string) => void }) {
   const [name, setName] = useState(playlist.name)
+  const [editing, setEditing] = useState(false)
+  const [editSearch, setEditSearch] = useState('')
   const entries = playlist.mediaIds.map((id) => media.find((item) => item.id === id)).filter((item): item is MediaItem => Boolean(item))
   return <article className="playlist-card"><div className="playlist-cover"><span>≋</span></div><div><span className="section-eyebrow">PLAYLIST</span><h2>{playlist.name}</h2><p>{entries.length} saved title{entries.length === 1 ? '' : 's'}</p>{entries[0] && <button className="text-button" onClick={() => onPlay(entries[0].id)}>Play first →</button>}
     {entries.length > 0 && <ol>{entries.map((item, index) => <li key={item.id}>{item.title} <button type="button" className="text-button" disabled={index === 0} aria-label={`Move ${item.title} earlier`} onClick={() => onMove(item.id, -1)}>↑</button> <button type="button" className="text-button" disabled={index === entries.length - 1} aria-label={`Move ${item.title} later`} onClick={() => onMove(item.id, 1)}>↓</button></li>)}</ol>}
     <div><button className="secondary-button" disabled={!entries.length} onClick={onCreateChannel}>Create channel</button> <button className="secondary-button" aria-label={`Delete ${playlist.name}`} onClick={onDelete}>Delete playlist</button></div>
     <details><summary>Rename playlist</summary><form className="inline-form" onSubmit={(event) => { event.preventDefault(); if (name.trim()) onRename(name.trim()) }}><input aria-label={`Rename ${playlist.name}`} value={name} onChange={(event) => setName(event.target.value)} /><button className="secondary-button">Save name</button></form></details>
-    <details><summary>Edit titles</summary>{media.map((item) => <label className="checkbox-row" key={item.id}><input type="checkbox" checked={playlist.mediaIds.includes(item.id)} onChange={(event) => onChange(item.id, event.target.checked)} /> {item.title}</label>)}</details></div></article>
+    <details onToggle={(event) => setEditing(event.currentTarget.open)}><summary>Edit titles</summary>{editing && <><input aria-label="Search titles to edit" placeholder="Search titles…" value={editSearch} onChange={(event) => setEditSearch(event.target.value)} />{media.filter((item) => item.title.toLowerCase().includes(editSearch.toLowerCase())).slice(0, 100).map((item) => <label className="checkbox-row" key={item.id}><input type="checkbox" checked={playlist.mediaIds.includes(item.id)} onChange={(event) => onChange(item.id, event.target.checked)} /> {item.title}</label>)}<p>Showing up to 100 titles. Search to find others.</p></>}</details></div></article>
 }
 
 function ChannelCard({ channel, media, playlists, clock, onPlay }: { channel: Channel; media: MediaItem[]; playlists: Playlist[]; clock: Date; onPlay: () => void }) {
