@@ -7,6 +7,7 @@ try {
  await page.goto('http://127.0.0.1:4181/');await page.getByLabel('Search your library').waitFor();await page.waitForTimeout(1000)
  await page.evaluate(async()=>{const db=await new Promise(resolve=>{const r=indexedDB.open('vivid-media-library',1);r.onsuccess=()=>resolve(r.result)});const state=await new Promise(resolve=>{const r=db.transaction('state').objectStore('state').get('library');r.onsuccess=()=>resolve(r.result)});state.sources=[{id:'test',url:'https://catalog.example/',lastChecked:new Date().toISOString()}];await new Promise(resolve=>{const tx=db.transaction('state','readwrite');tx.objectStore('state').put(state,'library');tx.oncomplete=resolve});db.close()})
  await page.reload();await page.getByLabel('Search your library').fill('keanu reeves');await page.getByRole('button',{name:/Ask AI/}).click()
+ await page.getByRole('button',{name:'Save keanu reeves — everything playlist'}).waitFor({timeout:20000})
  await page.getByRole('button',{name:'Save John Wick playlist'}).waitFor({timeout:20000})
  await page.getByRole('button',{name:'Save The Matrix playlist'}).waitFor()
  await page.getByRole('button',{name:'Save John Wick playlist'}).click()

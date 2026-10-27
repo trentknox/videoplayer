@@ -1,4 +1,5 @@
 import type { MediaItem } from './types'
+import { mediaType } from './filters.ts'
 
 export interface AiSession { endpoint: string; token: string }
 export interface AiSearchResult { name: string; ids: string[]; action: 'search' | 'playlist' | 'channel'; suggestions: Array<{ name: string; ids: string[] }>; examined: number; total: number }
@@ -92,6 +93,20 @@ export function titleSuggestions(media: MediaItem[], ids: string[]): Array<{ nam
   return result.sort((a, b) => b.ids.length - a.ids.length).slice(0, 8)
 }
 
+/** Offer collections drawn only from the items actually found. */
+export function collectionSuggestions(query: string, media: MediaItem[], ids: string[]): Array<{ name: string; ids: string[] }> {
+  const selected = new Set(ids)
+  const items = media.filter((item) => selected.has(item.id))
+  if (items.length < 2) return []
+  const label = query.trim().replace(/\s+/g, ' ').slice(0, 70) || 'Your search'
+  const result = [{ name: `${label} — everything`, ids: items.map((item) => item.id) }]
+  const movies = items.filter((item) => mediaType(item) === 'movie').map((item) => item.id)
+  const series = items.filter((item) => ['series', 'episode'].includes(mediaType(item) ?? '')).map((item) => item.id)
+  if (movies.length >= 2 && movies.length !== items.length) result.push({ name: `${label} — movies`, ids: movies })
+  if (series.length >= 2 && series.length !== items.length) result.push({ name: `${label} — series`, ids: series })
+  return result
+}
+
 /** Explicitly labeled fallback for searching known metadata when no AI session is available. */
 export function searchByKeywords(query: string, media: MediaItem[]): AiSearchResult {
   const ignored = new Set(['the', 'and', 'for', 'all', 'by', 'of', 'films', 'film', 'watch', 'find', 'movies', 'movie', 'series', 'channel', 'channels', 'playlist', 'create', 'generate', 'make', 'loop', 'with', 'from', 'show', 'shows', 'please', 'everything', '24'])
@@ -101,10 +116,13 @@ export function searchByKeywords(query: string, media: MediaItem[]): AiSearchRes
     return words.every((word) => text.includes(word))
   }) : []
   const groups = new Map<string, string[]>()
+  const matchedIds = matched.map((item) => item.id)
+  for (const candidate of collectionSuggestions(query, matched, matchedIds)) groups.set(candidate.name, candidate.ids)
   for (const item of matched) {
     const name = (item.franchise || item.series || '').trim()
     if (name) groups.set(name, [...(groups.get(name) ?? []), item.id])
   }
-  for (const candidate of titleSuggestions(matched, matched.map((item) => item.id))) if (!groups.has(candidate.name)) groups.set(candidate.name, candidate.ids)
+  for (const candidate of titleSuggestions(matched, matchedIds)) if (!groups.has(candidate.name)) groups.set(candidate.name, candidate.ids)
   return { name: query.trim().slice(0, 100), ids: matched.map((item) => item.id), action: /\bchannel\b/i.test(query) ? 'channel' : /\bplaylist\b/i.test(query) ? 'playlist' : 'search', suggestions: [...groups].slice(0, 8).map(([name, ids]) => ({ name, ids })), examined: media.length, total: media.length }
 }
+

@@ -6,6 +6,8 @@ The gateway uses Python's standard library and SQLite. It defaults to loopback a
 
 For the current Oracle installation, `vivid-private-gateway.service` listens only on `127.0.0.1:3021`. This computer may reach it through a private SSH tunnel bound to its own loopback address. The tunnel is a normal process, not a scheduled task, and must be re-established after disconnect or restart. A public web origin may need explicit local-network permission in the browser.
 
+On this installation the gateway routes inference to the existing loopback Hermes refresh owner through a user-level systemd override. This keeps OAuth renewal in its designated owner instead of using a read-only proxy with an expired session. The upstream token file is read on the server and is not sent to the browser. Other VPS installations must configure their own trusted upstream and token file.
+
 `python server/manage_accounts.py` creates an account locally on the VPS with an interactive passcode prompt. `server/local_account_setup.py` offers a temporary loopback-only setup form on the Windows computer; it sends the account name and password over SSH stdin, never in command-line arguments. Use a strong unique password. Agent-token scope and API documentation is in [agent-api.md](agent-api.md).
 
 The prototype tests cover account isolation, child-profile filtering, locked playlists, bot-token scopes and revocation, fallback models, and concurrent-write conflicts. These tests do not establish a complete parental-control system. Source-provided age ratings can be wrong, and third-party players or other browser applications are outside Vivid's controls.

@@ -7,7 +7,7 @@ import { scanCatalog } from './catalogScan'
 import { advanceCatalogJob } from './catalogJob'
 import { movePlaylistItem } from './playlist'
 import { dueSource } from './sources'
-import { defaultFilters, filterLibrary, mediaYear } from './filters'
+import { defaultFilters, filterLibrary, mediaType, mediaYear } from './filters'
 import { adjacentChannel } from './channelNavigation'
 import { startUpdateMonitor } from './updateMonitor'
 import { posterSources } from './posters'
@@ -16,7 +16,7 @@ import { listBotTokens, createBotToken, revokeBotToken } from './botTokens'
 import type { BotScope, BotTokenInfo } from './botTokens'
 import { applyShared, getRemoteLibrary, mergeShared, putRemoteLibrary, sharedLibrary } from './cloudSync'
 import type { SharedLibrary } from './cloudSync'
-import { aiLogin, aiLogout, searchWithAi, searchByKeywords, titleSuggestions } from './aiSearch'
+import { aiLogin, aiLogout, searchWithAi, searchByKeywords, titleSuggestions, collectionSuggestions } from './aiSearch'
 import { discoverForSearch } from './searchSources'
 import { searchPublicSources } from './publicSearch'
 import type { AiSession, AiSearchResult } from './aiSearch'
@@ -277,9 +277,9 @@ export default function App() {
     if (!library) return []
     return filterLibrary(library.media, { ...filters, query: search })
   }, [library, search, filters])
-  const topRated = useMemo(() => library ? filterLibrary(library.media.filter((item) => item.rating !== undefined), { ...defaultFilters, sort: 'rating', order: 'desc' }).slice(0, 12) : [], [library])
-  const newReleases = useMemo(() => library ? filterLibrary(library.media.filter((item) => item.year !== undefined), { ...defaultFilters, sort: 'year', order: 'desc' }).slice(0, 12) : [], [library])
-  const recentlyAdded = useMemo(() => library ? filterLibrary(library.media, { ...defaultFilters, sort: 'added', order: 'desc' }).slice(0, 12) : [], [library])
+  const topRated = useMemo(() => library ? filterLibrary(library.media.filter((item) => item.rating !== undefined), { ...defaultFilters, sort: 'rating', order: 'desc' }).slice(0, 24) : [], [library])
+  const latestMovies = useMemo(() => library ? filterLibrary(library.media.filter((item) => mediaType(item) === 'movie'), { ...defaultFilters, sort: 'year', order: 'desc' }).slice(0, 24) : [], [library])
+  const latestShows = useMemo(() => library ? filterLibrary(library.media.filter((item) => mediaType(item) === 'series'), { ...defaultFilters, sort: 'year', order: 'desc' }).slice(0, 24) : [], [library])
 
   const allSchedules = useMemo(() => {
     if (!library) return new Map<string, ReturnType<typeof makeSchedule>>()
@@ -630,7 +630,7 @@ export default function App() {
         const exact = searchByKeywords(homeSearch, media)
         const directIds = new Set(media.filter((item) => directSourceUrls.has(item.sourceUrl)).map((item) => item.id))
         const ids = [...new Set([...result.ids, ...exact.ids.filter((id) => directIds.has(id))])]
-        const suggestions = [...result.suggestions]
+        const suggestions = [...collectionSuggestions(homeSearch, media, ids), ...result.suggestions]
         for (const group of titleSuggestions(media, ids)) if (!suggestions.some((item) => item.name.toLocaleLowerCase() === group.name.toLocaleLowerCase()) && suggestions.length < 8) suggestions.push(group)
         result = { ...result, ids, suggestions }
       }
@@ -930,7 +930,6 @@ export default function App() {
 
       <>
         <section className="content-section home-gallery" hidden={view !== 'home'}>
-          <div className="section-heading"><div><span className="section-eyebrow">YOUR MEDIA</span><h1>Find something to watch</h1><p>Describe what you want, or search your library by title, actor, genre, or series.</p></div></div>
             <form className="home-search" onSubmit={askAi}><input aria-label="Search your library" value={homeSearch} onChange={(event) => setHomeSearch(event.target.value)} placeholder="Ask for a movie, playlist, or channel…" /><button className="home-search-action" disabled={aiBusy}>{aiBusy ? 'Searching…' : 'Ask AI ↗'}</button></form>
           {aiDialogOpen && <div className="ai-dialog-backdrop" onClick={() => setAiDialogOpen(false)}><section className="ai-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-dialog-title" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === 'Escape') setAiDialogOpen(false) }}>
             <div className="ai-dialog-heading"><div><span className="section-eyebrow">AI SEARCH</span><h2 id="ai-dialog-title">{aiResult?.name ?? 'Your request'}</h2></div><button className="secondary-button" aria-label="Close search results" autoFocus onClick={() => setAiDialogOpen(false)}>×</button></div>
@@ -942,11 +941,13 @@ export default function App() {
               {aiResult.ids.length > 0 && <div className="ai-preview-actions"><button className="primary-button" onClick={() => saveAiPreview(true)}>Create playlist &amp; start channel</button><button className="secondary-button" onClick={() => saveAiPreview(false)}>Save playlist</button></div>}
             </section>}
           </section></div>}
-          <div className="section-heading curated-heading"><h2>Top rated in your library</h2>{topRated.length > 0 && <button className="secondary-button" onClick={() => playCollection('Top rated', topRated)}>Play as playlist</button>}</div>
-          {topRated.length ? <MediaGrid media={topRated} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} /> : <p>Add titles with ratings to see top-rated picks here.</p>}
-          <div className="section-heading curated-heading"><h2>New releases in your library</h2>{newReleases.length > 0 && <button className="secondary-button" onClick={() => playCollection('New releases', newReleases)}>Play as playlist</button>}</div>
-          {newReleases.length ? <MediaGrid media={newReleases} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} /> : <p>Add titles with release dates to see new releases here.</p>}
-          <div className="section-heading curated-heading"><h2>Recently added</h2>{recentlyAdded.length > 0 && <button className="secondary-button" onClick={() => playCollection('Recently added', recentlyAdded)}>Play as playlist</button>}</div><MediaGrid media={recentlyAdded} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} />
+          <div className="section-heading curated-heading"><h2>Trending</h2>{topRated.length > 0 && <button className="secondary-button" onClick={() => playCollection('Top rated', topRated)}>Play as playlist</button>}</div>
+          <p className="gallery-caption">Trending data is not available from your sources yet. Showing top-rated titles from your library.</p>
+          {topRated.length ? <MediaGrid media={topRated} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} /> : <p>Add titles with source ratings to see picks here.</p>}
+          <div className="section-heading curated-heading"><h2>Latest Movies</h2>{latestMovies.length > 0 && <button className="secondary-button" onClick={() => playCollection('Latest Movies', latestMovies)}>Play as playlist</button>}</div>
+          {latestMovies.length ? <MediaGrid media={latestMovies} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} /> : <p>Import movies to see them here.</p>}
+          <div className="section-heading curated-heading"><h2>Latest TV Shows</h2>{latestShows.length > 0 && <button className="secondary-button" onClick={() => playCollection('Latest TV Shows', latestShows)}>Play as playlist</button>}</div>
+          {latestShows.length ? <MediaGrid media={latestShows} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} /> : <p>Import TV shows to see them here.</p>}
         </section>
         <section className={`hero-grid ${view !== 'player' || minimizedPlayer ? 'mini-player-grid' : theaterMode ? 'theater-mode' : ''}`} hidden={view !== 'player' && (!active || !playerEngaged)}>
           <div className="player-panel" ref={playerPanel}>

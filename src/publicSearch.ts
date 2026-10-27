@@ -36,7 +36,7 @@ export async function searchPublicSources(sources: SavedSource[], query: string,
       }
       // A site search for a person may return only a documentary. Follow an
       // exact cast link from a result to the site's public filmography page.
-      if (listings.length <= 2 && terms.trim().includes(' ')) {
+      if (listings.length > 0 && terms.trim().includes(' ')) {
         const snapshot = listings.filter((item) => { try { return new URL(item.url).origin === sourceUrl.origin } catch { return false } }).slice(0, 2)
         for (const listing of snapshot) {
           const detail = await analyze(listing.url)

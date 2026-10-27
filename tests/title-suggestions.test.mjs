@@ -11,3 +11,11 @@ test('actor filmography offers real matching franchise playlists',()=>{
  assert.deepEqual(matrix.ids,['4','5','6'])
  assert.ok(!john.ids.includes('7'))
 })
+
+test('actor results offer an everything channel and separate available media types',()=>{
+ const media=[{...base,id:'1',title:'First',sourceUrl:'https://example.test/watch-movie/first'}, {...base,id:'2',title:'Second',sourceUrl:'https://example.test/watch-movie/second'}, {...base,id:'3',title:'Show one',sourceUrl:'https://example.test/watch-series/one'}, {...base,id:'4',title:'Show two',sourceUrl:'https://example.test/watch-series/two'}]
+ const result=searchByKeywords('Keanu Reeves',media)
+ assert.deepEqual(result.suggestions.find(x=>x.name==='Keanu Reeves — everything').ids,['1','2','3','4'])
+ assert.deepEqual(result.suggestions.find(x=>x.name==='Keanu Reeves — movies').ids,['1','2'])
+ assert.deepEqual(result.suggestions.find(x=>x.name==='Keanu Reeves — series').ids,['3','4'])
+})
