@@ -70,7 +70,11 @@ export default function PlayerSurface({ item, onEnded, autoPlay }: PlayerSurface
     let cancelled = false
     let destroy: (() => void) | undefined
     void import('hls.js').then(({ default: Hls }) => {
-      if (cancelled || !Hls.isSupported()) return
+      if (cancelled) return
+      if (!Hls.isSupported()) {
+        if (video.canPlayType('application/vnd.apple.mpegurl')) video.src = item.embedUrl
+        return
+      }
       const hls = new Hls({ enableWorker: true })
       hls.loadSource(item.embedUrl)
       hls.attachMedia(video)
@@ -114,7 +118,7 @@ export default function PlayerSurface({ item, onEnded, autoPlay }: PlayerSurface
         autoPlay
         playsInline
         onEnded={onEnded}
-        src={item.embedUrl}
+        src={isHls ? undefined : item.embedUrl}
       >
         Your browser cannot play this source.
       </video>
