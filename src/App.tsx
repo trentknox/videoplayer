@@ -11,6 +11,7 @@ import { defaultFilters, filterLibrary } from './filters'
 import { adjacentChannel } from './channelNavigation'
 import { startUpdateMonitor } from './updateMonitor'
 import { posterSources } from './posters'
+import { readPlayback, saveSelection, saveProgress } from './playbackSession'
 import { aiLogin, aiLogout, searchWithAi } from './aiSearch'
 import { discoverForSearch } from './searchSources'
 import type { AiSession, AiSearchResult } from './aiSearch'
@@ -97,6 +98,7 @@ function toMediaItem(analysis: AnalysisResult, draft: ImportDraft, pageAnalysis:
 export default function App() {
   const [library, setLibrary] = useState<LibraryState | null>(null)
   const [activeId, setActiveId] = useState<string>()
+  const [resumeTarget, setResumeTarget] = useState<{ id: string; position: number }>()
   const [selectedPlayer, setSelectedPlayer] = useState('')
   const [resolveAttempt, setResolveAttempt] = useState(0)
   const [activePlaylistId, setActivePlaylistId] = useState<string>()
@@ -141,10 +143,23 @@ export default function App() {
 
   useEffect(() => {
     loadLibrary().then((loaded) => {
+      const previous = readPlayback(window.sessionStorage)
+      const item = loaded.media.find((entry) => entry.id === previous?.mediaId)
       setLibrary(loaded)
-      setActiveId(loaded.media[0]?.id)
+      setActiveId(item?.id ?? loaded.media[0]?.id)
+      if (item && previous) {
+        setResumeTarget({ id: item.id, position: previous.position })
+        if (previous.channelId && loaded.channels.some((entry) => entry.id === previous.channelId)) setActiveChannelId(previous.channelId)
+        else if (previous.playlistId && loaded.playlists.some((entry) => entry.id === previous.playlistId && entry.mediaIds.includes(item.id))) setActivePlaylistId(previous.playlistId)
+      }
     })
   }, [])
+
+  useEffect(() => {
+    if (!library || !activeId) return
+    saveSelection(window.sessionStorage, { mediaId: activeId, playlistId: activePlaylistId, channelId: activeChannelId })
+    setResumeTarget((current) => current && current.id !== activeId ? undefined : current)
+  }, [library, activeId, activePlaylistId, activeChannelId])
 
   useEffect(() => {
     if (library) void saveLibrary(library).catch(() => setNotice('Could not save your library on this device. Export a backup from Settings.'))
@@ -637,7 +652,7 @@ export default function App() {
           <div className="player-panel" ref={playerPanel}>
             {view !== 'home' || minimizedPlayer ? <button className="mini-player-return" onClick={() => { setMinimizedPlayer(false); setView('home') }}>Return to player ↗</button> : <div className="player-toolbar"><button onClick={() => setTheaterMode((value) => !value)} aria-pressed={theaterMode}>{theaterMode ? 'Exit theater mode' : 'Theater mode'}</button><button onClick={() => setMinimizedPlayer(true)}>Mini-player ↘</button></div>}
             <div className="section-eyebrow">NOW PLAYING</div>
-            <PlayerSurface key={activeChannelId ? channelSlotId : activeId} item={activePlayer} onStarted={recordPlayback} onEnded={activePlaylist ? nextInPlaylist : undefined} autoPlay={Boolean(activePlaylist || activeChannelId)} slotStart={activeChannelId ? channelSlotStart : undefined} />
+            <PlayerSurface key={activeChannelId ? channelSlotId : activeId} item={activePlayer} resumeAt={!activeChannelId && resumeTarget && resumeTarget.id === activeId ? resumeTarget.position : undefined} onProgress={(position) => { if (activeId) saveProgress(window.sessionStorage, activeId, position) }} onStarted={recordPlayback} onEnded={activePlaylist ? nextInPlaylist : undefined} autoPlay={Boolean(activePlaylist || activeChannelId || (resumeTarget && resumeTarget.id === activeId && resumeTarget.position > 0))} slotStart={activeChannelId ? channelSlotStart : undefined} />
             <div className="now-playing-meta">
               <div>
                 <h1>{active?.title ?? 'Your media, one screen.'}</h1>
