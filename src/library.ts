@@ -3,6 +3,8 @@ import type { LibraryState } from './types'
 const DATABASE = 'vivid-media-library'
 const STORE = 'state'
 const KEY = 'library'
+const RECOVERY_KEY = 'vivid-library-recovery'
+let saveQueue: Promise<void> = Promise.resolve()
 const OLD_SAMPLE_URL = 'https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
 const SAMPLE_URL = 'https://www.w3schools.com/html/mov_bbb.mp4'
 
@@ -75,20 +77,37 @@ async function putValue<T>(key: string, value: T): Promise<void> {
 }
 
 export async function loadLibrary(): Promise<LibraryState> {
+  // A fallback is written only after an IndexedDB failure, so it is newer than
+  // the last successful database write and must take precedence on recovery.
+  let recovery: string | null = null
+  try { recovery = window.localStorage.getItem(RECOVERY_KEY) } catch { /* Storage may be disabled. */ }
+  if (recovery) {
+    try { return migrateSample(JSON.parse(recovery) as LibraryState) } catch { /* Try the database. */ }
+  }
   try {
-    return migrateSample((await getValue<LibraryState>(KEY)) ?? defaultState)
-  } catch {
+    const stored = await getValue<LibraryState>(KEY)
+    if (stored) return migrateSample(stored)
+  } catch { /* Try the older fallback below. */ }
+  try {
     const local = window.localStorage.getItem(KEY)
     return migrateSample(local ? JSON.parse(local) as LibraryState : defaultState)
-  }
+  } catch { return migrateSample(defaultState) }
 }
 
-export async function saveLibrary(state: LibraryState): Promise<void> {
-  try {
-    await putValue(KEY, state)
-  } catch {
-    window.localStorage.setItem(KEY, JSON.stringify(state))
-  }
+export function saveLibrary(state: LibraryState): Promise<void> {
+  // Preserve call order even if opening IndexedDB or committing a transaction is slow.
+  const operation = saveQueue.catch(() => {}).then(async () => {
+    try {
+      await putValue(KEY, state)
+      // If clearing an old recovery copy fails, write the latest state there instead.
+      window.localStorage.removeItem(RECOVERY_KEY)
+    } catch {
+      // If this also fails, surface the failure to the UI rather than claiming a save.
+      window.localStorage.setItem(RECOVERY_KEY, JSON.stringify(state))
+    }
+  })
+  saveQueue = operation
+  return operation
 }
 
 export function exportLibrary(state: LibraryState): void {

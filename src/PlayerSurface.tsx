@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type Hls from 'hls.js'
 import type { MediaItem } from './types'
 import { elapsedSeconds } from './scheduler'
 
@@ -65,10 +66,15 @@ interface PlayerSurfaceProps {
 
 export default function PlayerSurface({ item, onEnded, autoPlay, slotStart }: PlayerSurfaceProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const hlsRef = useRef<Hls | null>(null)
+  const [levels, setLevels] = useState<Array<{ index: number; label: string }>>([])
+  const [quality, setQuality] = useState(-1)
   const isHls = Boolean(item?.embedUrl.match(/\.m3u8(?:$|[?#])/i))
 
   useEffect(() => {
     const video = videoRef.current
+    setLevels([])
+    setQuality(-1)
     if (!item || !video || !isHls) return
     let cancelled = false
     let destroy: (() => void) | undefined
@@ -79,9 +85,13 @@ export default function PlayerSurface({ item, onEnded, autoPlay, slotStart }: Pl
         return
       }
       const hls = new Hls({ enableWorker: true })
+      hlsRef.current = hls
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        setLevels(hls.levels.map((level, index) => ({ index, label: level.height ? `${level.height}p${level.bitrate ? ` · ${Math.round(level.bitrate / 1000)} kbps` : ''}` : `${Math.round(level.bitrate / 1000)} kbps` })))
+      })
       hls.loadSource(item.embedUrl)
       hls.attachMedia(video)
-      destroy = () => hls.destroy()
+      destroy = () => { hlsRef.current = null; hls.destroy() }
     })
     return () => {
       cancelled = true
@@ -114,6 +124,7 @@ export default function PlayerSurface({ item, onEnded, autoPlay, slotStart }: Pl
 
   if (item.provider === 'direct' || isHls) {
     return (
+      <>
       <video
         ref={videoRef}
         className="media-video"
@@ -131,6 +142,8 @@ export default function PlayerSurface({ item, onEnded, autoPlay, slotStart }: Pl
       >
         Your browser cannot play this source.
       </video>
+      {isHls && levels.length > 1 && <label className="quality-control">Playback quality <select aria-label="Playback quality" value={quality} onChange={(event) => { const next = Number(event.target.value); setQuality(next); if (hlsRef.current) hlsRef.current.currentLevel = next }}><option value={-1}>Auto</option>{levels.map((level) => <option key={level.index} value={level.index}>{level.label}</option>)}</select></label>}
+      </>
     )
   }
 

@@ -100,6 +100,7 @@ export default function App() {
   const [channelSlotId, setChannelSlotId] = useState<string>()
   const [channelSlotStart, setChannelSlotStart] = useState<string>()
   const [view, setView] = useState<View>('home')
+  const [minimizedPlayer, setMinimizedPlayer] = useState(false)
   const [draft, setDraft] = useState<ImportDraft>(blankDraft)
   const [pageAnalysis, setPageAnalysis] = useState(true)
   const [importing, setImporting] = useState(false)
@@ -133,7 +134,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (library) void saveLibrary(library)
+    if (library) void saveLibrary(library).catch(() => setNotice('Could not save your library on this device. Export a backup from Settings.'))
   }, [library])
 
   useEffect(() => {
@@ -517,16 +518,17 @@ export default function App() {
       {updateAvailable && <div className="notice" role="status">A Vivid update is ready. It will load automatically when the player is idle. <button onClick={() => window.location.reload()}>Update now</button></div>}
       <div hidden={view !== 'settings'}><InstallApp /></div>
 
-      {view === 'home' && <>
-        <section className="content-section home-gallery">
+      <>
+        <section className="content-section home-gallery" hidden={view !== 'home'}>
           <div className="section-heading"><div><span className="section-eyebrow">YOUR MEDIA</span><h1>Find something to watch</h1><p>Browse your library, or search by title, actor, genre, or series.</p></div>
             <form className="home-search" onSubmit={(event) => { event.preventDefault(); setSearch(homeSearch); setView('library') }}><input aria-label="Search your library" value={homeSearch} onChange={(event) => setHomeSearch(event.target.value)} placeholder="Search your library…" /><button className="primary-button">Search</button></form>
           </div>
           <h2>Explore your library</h2>
           <MediaGrid media={homeGallery} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} />
         </section>
-        <section className="hero-grid">
+        <section className={`hero-grid ${view !== 'home' || minimizedPlayer ? 'mini-player-grid' : ''}`} hidden={view !== 'home' && !active}>
           <div className="player-panel" ref={playerPanel}>
+            {view !== 'home' || minimizedPlayer ? <button className="mini-player-return" onClick={() => { setMinimizedPlayer(false); setView('home') }}>Return to player ↗</button> : <button className="mini-player-return" onClick={() => setMinimizedPlayer(true)}>Mini-player ↘</button>}
             <div className="section-eyebrow">NOW PLAYING</div>
             <PlayerSurface key={activeChannelId ? channelSlotId : activeId} item={activePlayer} onEnded={activePlaylist ? nextInPlaylist : undefined} autoPlay={Boolean(activePlaylist || activeChannelId)} slotStart={activeChannelId ? channelSlotStart : undefined} />
             <div className="now-playing-meta">
@@ -539,7 +541,7 @@ export default function App() {
               {active && <div>{activePlaylist && <button className="secondary-button" onClick={nextInPlaylist}>Next in {activePlaylist.name} →</button>} <button className="secondary-button" onClick={() => addToWatchLater(active.id)}>＋ Watch later</button></div>}
             </div>
           </div>
-          <aside className="import-card">
+          <aside className="import-card" hidden={view !== 'home' || minimizedPlayer}>
             <div className="section-eyebrow">UNIVERSAL IMPORTER</div>
             <h2>Paste a source. Build your world.</h2>
             <p>Single videos, playlists, channels, permitted public pages, direct streams, Plex sources, YouTube, Twitch, and Cloudflare Stream.</p>
@@ -570,11 +572,11 @@ export default function App() {
           </aside>
         </section>
 
-        <section className="content-section">
+        <section className="content-section" hidden={view !== 'home'}>
           <div className="section-heading"><div><span className="section-eyebrow">YOUR LIBRARY</span><h2>Continue watching</h2></div><button className="text-button" onClick={() => setView('library')}>Open library →</button></div>
           <MediaGrid media={library.media.slice(0, 6)} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} />
         </section>
-      </>}
+      </>
 
       {view === 'library' && <section className="content-section library-view">
         <div className="section-heading"><div><span className="section-eyebrow">PRIVATE CATALOG</span><h1>Library</h1></div><input className="search-input" placeholder="Search title, actor, franchise, tag…" value={search} onChange={(event) => setSearch(event.target.value)} /></div>

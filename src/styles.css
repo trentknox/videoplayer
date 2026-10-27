@@ -134,3 +134,16 @@ input:focus { border-color: #9b90ff; box-shadow: 0 0 0 3px rgba(155,144,255,.14)
 
 @media (max-width: 1050px) { .media-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } .hero-grid { grid-template-columns: 1fr; } }
 @media (max-width: 720px) { .app-shell, .loading-screen { width: min(100% - 26px, 1500px); } .topbar { align-items: flex-start; flex-wrap: wrap; padding-bottom: 14px; gap: 10px; } nav { order: 3; width: 100%; overflow-x: auto; } .status-pill { margin-left: auto; } .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .playlist-grid, .channel-grid, .settings-grid { grid-template-columns: 1fr; } .inline-form, .form-row { flex-direction: column; grid-template-columns: 1fr; } .now-playing-meta, .section-heading { align-items: flex-start; flex-direction: column; } .search-input { max-width: none; } }
+
+/* Keep the same player alive while browsing other sections. */
+[hidden] { display: none !important; }
+.mini-player-grid { position: fixed; z-index: 30; right: 20px; bottom: 20px; width: min(360px, calc(100vw - 32px)); display: block; margin: 0; }
+.mini-player-grid .player-panel { box-shadow: 0 15px 50px rgba(0,0,0,.65); }
+.mini-player-grid .player-panel > .section-eyebrow { display: none; }
+.mini-player-grid .now-playing-meta { padding: 8px 12px 10px; gap: 8px; }
+.mini-player-grid .now-playing-meta h1 { font-size: 1rem; margin: 0; }
+.mini-player-grid .now-playing-meta p, .mini-player-grid .now-playing-meta a, .mini-player-grid .now-playing-meta label { display: none; }
+.mini-player-grid .now-playing-meta button { font-size: .7rem; padding: 5px; }
+.mini-player-return { display: block; width: 100%; border: 0; background: #232540; color: white; padding: 6px; cursor: pointer; text-align: right; }
+
+.quality-control { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 6px 12px; font-size: .8rem; }
