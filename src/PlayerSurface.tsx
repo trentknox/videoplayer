@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { MediaItem } from './types'
+import { elapsedSeconds } from './scheduler'
 
 type YoutubePlayer = { destroy: () => void }
 type YoutubeApi = { Player: new (element: HTMLElement, options: { events: { onStateChange: (event: { data: number }) => void } }) => YoutubePlayer }
@@ -25,7 +26,7 @@ function loadYoutubeApi(): Promise<YoutubeApi> {
   return youtubeApiPromise
 }
 
-function YoutubeSurface({ item, onEnded, autoPlay }: { item: MediaItem; onEnded?: () => void; autoPlay?: boolean }) {
+function YoutubeSurface({ item, onEnded, autoPlay, slotStart }: { item: MediaItem; onEnded?: () => void; autoPlay?: boolean; slotStart?: string }) {
   const container = useRef<HTMLDivElement>(null)
   const endedRef = useRef(onEnded)
   endedRef.current = onEnded
@@ -38,6 +39,7 @@ function YoutubeSurface({ item, onEnded, autoPlay }: { item: MediaItem; onEnded?
     const url = new URL(item.embedUrl)
     url.searchParams.set('enablejsapi', '1')
     if (autoPlay) url.searchParams.set('autoplay', '1')
+    if (slotStart && item.kind === 'video') url.searchParams.set('start', String(elapsedSeconds(slotStart)))
     if (window.location.origin !== 'null') url.searchParams.set('origin', window.location.origin)
     frame.src = url.href
     frame.className = 'media-embed'
@@ -50,7 +52,7 @@ function YoutubeSurface({ item, onEnded, autoPlay }: { item: MediaItem; onEnded?
       player = new api.Player(frame, { events: { onStateChange: (event) => { if (event.data === 0) endedRef.current?.() } } })
     }).catch(() => { /* The iframe remains playable even if the API fails. */ })
     return () => { cancelled = true; player?.destroy(); frame.remove() }
-  }, [item.id, item.embedUrl, item.title, autoPlay])
+  }, [item.id, item.embedUrl, item.title, item.kind, autoPlay, slotStart])
   return <div ref={container} />
 }
 
@@ -58,9 +60,10 @@ interface PlayerSurfaceProps {
   item?: MediaItem
   onEnded?: () => void
   autoPlay?: boolean
+  slotStart?: string
 }
 
-export default function PlayerSurface({ item, onEnded, autoPlay }: PlayerSurfaceProps) {
+export default function PlayerSurface({ item, onEnded, autoPlay, slotStart }: PlayerSurfaceProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const isHls = Boolean(item?.embedUrl.match(/\.m3u8(?:$|[?#])/i))
 
@@ -107,7 +110,7 @@ export default function PlayerSurface({ item, onEnded, autoPlay }: PlayerSurface
     </div>
   }
 
-  if (item.provider === 'youtube') return <YoutubeSurface item={item} onEnded={onEnded} autoPlay={autoPlay} />
+  if (item.provider === 'youtube') return <YoutubeSurface item={item} onEnded={onEnded} autoPlay={autoPlay} slotStart={slotStart} />
 
   if (item.provider === 'direct' || isHls) {
     return (
@@ -118,6 +121,12 @@ export default function PlayerSurface({ item, onEnded, autoPlay }: PlayerSurface
         autoPlay
         playsInline
         onEnded={onEnded}
+        onLoadedMetadata={(event) => {
+          if (!slotStart || item.kind !== 'video') return
+          const video = event.currentTarget
+          const offset = elapsedSeconds(slotStart)
+          if (Number.isFinite(video.duration) && offset < video.duration) video.currentTime = offset
+        }}
         src={isHls ? undefined : item.embedUrl}
       >
         Your browser cannot play this source.

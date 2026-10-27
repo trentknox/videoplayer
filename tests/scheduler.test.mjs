@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { makeSchedule, nowPlaying } from '../src/scheduler.ts'
+import { elapsedSeconds, makeSchedule, nowPlaying } from '../src/scheduler.ts'
 
 const channel = { id: 'channel', anchor: '2026-01-01T00:00:00Z', durationHours: 24, filter: '' }
 const media = [
   { id: 'a', title: 'First', provider: 'direct', kind: 'video', tags: ['science'], actors: [], durationSeconds: 3600 },
   { id: 'b', title: 'Second', provider: 'direct', kind: 'video', tags: [], actors: ['Example Actor'], durationSeconds: 1800 },
 ]
+
+test('tuning in uses elapsed slot time and clamps future or invalid dates', () => {
+  const now = new Date('2026-01-01T00:12:34.900Z')
+  assert.equal(elapsedSeconds('2026-01-01T00:00:00Z', now), 754)
+  assert.equal(elapsedSeconds('2026-01-01T01:00:00Z', now), 0)
+  assert.equal(elapsedSeconds('invalid', now), 0)
+})
 
 test('a recurring schedule resolves the current slot after multiple days', () => {
   const at = new Date('2026-01-04T12:30:00Z')

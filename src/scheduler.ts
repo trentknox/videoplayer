@@ -46,6 +46,12 @@ export function nowPlaying(slots: ScheduleSlot[], at = new Date()): ScheduleSlot
   return slots.find((slot) => timestamp >= new Date(slot.startsAt).getTime() && timestamp < new Date(slot.endsAt).getTime())
 }
 
+export function elapsedSeconds(start: string, at = new Date()): number {
+  const startMs = new Date(start).getTime()
+  const elapsed = (at.getTime() - startMs) / 1000
+  return Number.isFinite(elapsed) ? Math.max(0, Math.floor(elapsed)) : 0
+}
+
 export function formatClock(value: string): string {
   return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(value))
 }

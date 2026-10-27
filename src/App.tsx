@@ -80,6 +80,7 @@ export default function App() {
   const [activePlaylistId, setActivePlaylistId] = useState<string>()
   const [activeChannelId, setActiveChannelId] = useState<string>()
   const [channelSlotId, setChannelSlotId] = useState<string>()
+  const [channelSlotStart, setChannelSlotStart] = useState<string>()
   const [view, setView] = useState<View>('home')
   const [draft, setDraft] = useState<ImportDraft>(blankDraft)
   const [pageAnalysis, setPageAnalysis] = useState(true)
@@ -134,6 +135,7 @@ export default function App() {
       if (!slot) return
       setActiveId(slot.mediaId)
       setChannelSlotId(slot.id)
+      setChannelSlotStart(slot.startsAt)
       timer = window.setTimeout(update, Math.max(100, new Date(slot.endsAt).getTime() - now.getTime() + 50))
     }
     update()
@@ -336,7 +338,7 @@ export default function App() {
         <section className="hero-grid">
           <div className="player-panel">
             <div className="section-eyebrow">NOW PLAYING</div>
-            <PlayerSurface key={activeChannelId ? channelSlotId : activeId} item={active} onEnded={activePlaylist ? nextInPlaylist : undefined} autoPlay={Boolean(activePlaylist || activeChannelId)} />
+            <PlayerSurface key={activeChannelId ? channelSlotId : activeId} item={active} onEnded={activePlaylist ? nextInPlaylist : undefined} autoPlay={Boolean(activePlaylist || activeChannelId)} slotStart={activeChannelId ? channelSlotStart : undefined} />
             <div className="now-playing-meta">
               <div>
                 <h1>{active?.title ?? 'Your media, one screen.'}</h1>
