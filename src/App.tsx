@@ -8,6 +8,7 @@ import { advanceCatalogJob } from './catalogJob'
 import { movePlaylistItem } from './playlist'
 import { dueSource } from './sources'
 import { defaultFilters, filterLibrary } from './filters'
+import { adjacentChannel } from './channelNavigation'
 import type { LibraryFilters } from './filters'
 import { formatClock, makeSchedule, nowPlaying } from './scheduler'
 import type { AnalysisResult, Channel, ImportDraft, LibraryState, MediaItem, Playlist } from './types'
@@ -68,6 +69,7 @@ function toMediaItem(analysis: AnalysisResult, draft: ImportDraft, pageAnalysis:
     title: draft.title.trim() || analysis.title,
     description: analysis.description,
     contentType: analysis.contentType ?? (draft.episode ? 'episode' : undefined),
+    contentRating: analysis.contentRating,
     genres: analysis.genres,
     countries: analysis.countries,
     year: analysis.year,
@@ -103,6 +105,7 @@ export default function App() {
   const [catalogSections, setCatalogSections] = useState<Array<{ url: string; title: string }>>([])
   const [notice, setNotice] = useState('')
   const [search, setSearch] = useState('')
+  const [homeSearch, setHomeSearch] = useState('')
   const [filters, setFilters] = useState<LibraryFilters>(defaultFilters)
   const [playlistName, setPlaylistName] = useState('')
   const [channelName, setChannelName] = useState('')
@@ -110,6 +113,7 @@ export default function App() {
   const [sourceUrl, setSourceUrl] = useState('')
   const [clock, setClock] = useState(() => new Date())
   const importInput = useRef<HTMLInputElement>(null)
+  const playerPanel = useRef<HTMLDivElement>(null)
   const stopCatalogImport = useRef(false)
   const sourceSyncLock = useRef(false)
 
@@ -148,6 +152,10 @@ export default function App() {
     if (!library) return []
     return filterLibrary(library.media, { ...filters, query: search })
   }, [library, search, filters])
+  const homeGallery = useMemo(() => {
+    if (!library) return []
+    return filterLibrary(library.media, { ...defaultFilters, query: homeSearch, sort: 'rating', order: 'desc' }).slice(0, 12)
+  }, [library, homeSearch])
 
   const allSchedules = useMemo(() => {
     if (!library) return new Map<string, ReturnType<typeof makeSchedule>>()
@@ -171,6 +179,21 @@ export default function App() {
     update()
     return () => { if (timer !== undefined) window.clearTimeout(timer) }
   }, [activeChannelId, library])
+
+  useEffect(() => {
+    if (!activeChannelId || !library || view !== 'home') return
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target
+      if (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(target.tagName))) return
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+      const channel = adjacentChannel(library.channels, activeChannelId, event.key === 'ArrowUp' ? -1 : 1)
+      if (!channel) return
+      event.preventDefault()
+      playChannel(channel)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [activeChannelId, library, view, allSchedules])
 
   function updateLibrary(updater: (current: LibraryState) => LibraryState): void {
     setLibrary((current) => current ? updater(current) : current)
@@ -326,6 +349,7 @@ export default function App() {
     setActivePlaylistId(undefined)
     setActiveId(id)
     setView('home')
+    window.requestAnimationFrame(() => playerPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
     if (!item) return
     let needsRefresh = item.kind === 'catalog'
     try { needsRefresh ||= new URL(item.sourceUrl).hostname.toLowerCase() === '1movies.stream' } catch { /* Invalid links remain saved. */ }
@@ -334,7 +358,7 @@ export default function App() {
     void analyzePublicPage(item.sourceUrl).then((result) => {
       if (result.kind !== 'video' || result.analysisUnavailable) { setNotice('No player was found for this title.'); return }
       updateLibrary((current) => ({ ...current, media: current.media.map((entry) => entry.id === id
-        ? { ...entry, provider: result.provider, kind: result.kind, embedUrl: result.embedUrl, playerOptions: result.playerOptions, contentType: result.contentType ?? entry.contentType, genres: result.genres?.length ? result.genres : entry.genres, countries: result.countries?.length ? result.countries : entry.countries, year: result.year ?? entry.year, rating: result.rating ?? entry.rating, budgetUsd: result.budgetUsd ?? entry.budgetUsd, revenueUsd: result.revenueUsd ?? entry.revenueUsd, actors: [...new Set([...entry.actors, ...(result.actors ?? [])])] } : entry) }))
+        ? { ...entry, provider: result.provider, kind: result.kind, embedUrl: result.embedUrl, playerOptions: result.playerOptions, contentType: result.contentType ?? entry.contentType, contentRating: result.contentRating ?? entry.contentRating, genres: result.genres?.length ? result.genres : entry.genres, countries: result.countries?.length ? result.countries : entry.countries, year: result.year ?? entry.year, rating: result.rating ?? entry.rating, budgetUsd: result.budgetUsd ?? entry.budgetUsd, revenueUsd: result.revenueUsd ?? entry.revenueUsd, actors: [...new Set([...entry.actors, ...(result.actors ?? [])])] } : entry) }))
       setNotice('Player refreshed. Playback depends on the provider.')
     }).catch(() => setNotice('Could not refresh this player.'))
   }
@@ -400,6 +424,7 @@ export default function App() {
     setActivePlaylistId(undefined)
     setActiveChannelId(channel.id)
     setView('home')
+    window.requestAnimationFrame(() => playerPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
     setNotice(`${channel.name} is live now.`)
   }
 
@@ -442,8 +467,15 @@ export default function App() {
       <div hidden={view !== 'settings'}><InstallApp /></div>
 
       {view === 'home' && <>
+        <section className="content-section home-gallery">
+          <div className="section-heading"><div><span className="section-eyebrow">YOUR MEDIA</span><h1>Find something to watch</h1><p>Browse your library, or search by title, actor, genre, or series.</p></div>
+            <form className="home-search" onSubmit={(event) => { event.preventDefault(); setSearch(homeSearch); setView('library') }}><input aria-label="Search your library" value={homeSearch} onChange={(event) => setHomeSearch(event.target.value)} placeholder="Search your library…" /><button className="primary-button">Search</button></form>
+          </div>
+          <h2>Explore your library</h2>
+          <MediaGrid media={homeGallery} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} />
+        </section>
         <section className="hero-grid">
-          <div className="player-panel">
+          <div className="player-panel" ref={playerPanel}>
             <div className="section-eyebrow">NOW PLAYING</div>
             <PlayerSurface key={activeChannelId ? channelSlotId : activeId} item={activePlayer} onEnded={activePlaylist ? nextInPlaylist : undefined} autoPlay={Boolean(activePlaylist || activeChannelId)} slotStart={activeChannelId ? channelSlotStart : undefined} />
             <div className="now-playing-meta">
@@ -520,6 +552,15 @@ export default function App() {
         <div className="section-heading"><div><span className="section-eyebrow">VIRTUAL LINEAR TV</span><h1>24/7 networks</h1></div></div>
         <p className="channel-intro">Build continuous schedules from your saved library. A channel chooses the right item for the current time; it does not copy or rebroadcast source media.</p>
         <form className="inline-form channel-form" onSubmit={createChannel}><input value={channelName} onChange={(event) => setChannelName(event.target.value)} placeholder="Channel name" /><input value={channelFilter} onChange={(event) => setChannelFilter(event.target.value)} placeholder="Optional filter: actor, franchise, tag…" /><button className="primary-button">Launch 24/7 channel</button></form>
+        {library.channels.length > 0 && <section aria-label="Channel guide" className="channel-guide"><h2>Channel guide</h2><p>What’s on now and coming up. Use ↑ and ↓ while watching to change channels.</p>
+          {library.channels.map((channel) => {
+            const slots = allSchedules.get(channel.id) ?? []
+            const live = nowPlaying(slots, clock)
+            const index = live ? slots.findIndex((slot) => slot.id === live.id) : -1
+            const upcoming = index >= 0 ? slots.slice(index, index + 3) : []
+            return <div className="guide-row" key={channel.id}><button className="secondary-button" onClick={() => playChannel(channel)}>{channel.name}</button><div className="guide-programs">{upcoming.length ? upcoming.map((slot, slotIndex) => <div key={slot.id}><span>{slotIndex === 0 ? 'NOW' : formatClock(slot.startsAt)}</span><strong>{library.media.find((item) => item.id === slot.mediaId)?.title ?? 'Unavailable title'}</strong></div>) : <div>No matching titles</div>}</div></div>
+          })}
+        </section>}
         <div className="channel-grid">
           {library.channels.map((channel) => <ChannelCard key={channel.id} channel={channel} media={library.media} clock={clock} onPlay={() => playChannel(channel)} />)}
           {!library.channels.length && <div className="empty-state">Create a channel such as “Saturday Sci-Fi,” “Action by Keanu,” or “Live Creator Loop.”</div>}

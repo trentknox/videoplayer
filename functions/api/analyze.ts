@@ -136,7 +136,7 @@ function structuredVideo(html: string, base: URL): StructuredVideo {
   return {}
 }
 
-function catalogMetadata(html: string): { contentType?: 'movie' | 'series' | 'episode'; genres?: string[]; countries?: string[]; year?: number; actors?: string[]; rating?: number; budgetUsd?: number; revenueUsd?: number } {
+function catalogMetadata(html: string): { contentType?: 'movie' | 'series' | 'episode'; contentRating?: string; genres?: string[]; countries?: string[]; year?: number; actors?: string[]; rating?: number; budgetUsd?: number; revenueUsd?: number } {
   const find = (value: unknown, depth = 0): Record<string, unknown> | undefined => {
     if (!value || depth > 6) return undefined
     if (Array.isArray(value)) { for (const entry of value) { const found = find(entry, depth + 1); if (found) return found } return undefined }
@@ -167,6 +167,7 @@ function catalogMetadata(html: string): { contentType?: 'movie' | 'series' | 'ep
       }
       return {
         contentType: types.includes('Movie') ? 'movie' : types.includes('TVSeries') ? 'series' : 'episode',
+        contentRating: textField(record.contentRating)?.slice(0, 40),
         genres: names(record.genre), countries: names(record.countryOfOrigin), actors: names(record.actor ?? record.actors),
         year: match ? Number(match[1]) : undefined,
         rating: Number.isFinite(rating) && Number.isFinite(maximum) && maximum > 0 && rating >= 0 && rating <= maximum ? rating / maximum * 10 : undefined,

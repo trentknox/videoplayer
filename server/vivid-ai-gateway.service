@@ -1,0 +1,16 @@
+[Unit]
+Description=Vivid Hermes AI fallback gateway
+After=network-online.target vivid-brain-proxy.service
+Requires=vivid-brain-proxy.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/vivid-ai-gateway
+EnvironmentFile=-%h/.config/vivid/gateway.env
+ExecStart=/usr/bin/python3 -u %h/vivid-ai-gateway/gateway.py
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

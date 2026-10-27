@@ -12,6 +12,7 @@ export interface MediaItem {
   title: string
   description?: string
   contentType?: 'movie' | 'series' | 'episode'
+  contentRating?: string
   genres?: string[]
   countries?: string[]
   year?: number
@@ -90,6 +91,7 @@ export interface AnalysisResult {
   poster?: string
   description?: string
   contentType?: 'movie' | 'series' | 'episode'
+  contentRating?: string
   genres?: string[]
   countries?: string[]
   year?: number

@@ -48,7 +48,7 @@ try {
   await page.getByLabel('Source URL to save').fill('https://catalog.example/new')
   await page.getByRole('button', { name: 'Add source' }).click()
   await page.getByRole('button', { name: 'home', exact: true }).click()
-  await page.getByRole('button', { name: 'Play Film 34' }).waitFor({ timeout: 30000 })
+  await page.getByRole('button', { name: 'Play Film 34' }).first().waitFor({ timeout: 30000 })
   await page.reload({ waitUntil: 'domcontentloaded' })
   await page.getByRole('button', { name: 'settings', exact: true }).click()
   await page.getByText('https://catalog.example/new', { exact: true }).waitFor()
