@@ -40,6 +40,16 @@ test('a landing page can point to a same-origin catalog page', async () => {
   } finally { globalThis.fetch = originalFetch }
 })
 
+test('catalog discovery identifies distinct same-site movies and series sections', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response('<a href="/movies">Movies</a><a href="/shows">TV Shows</a><a href="/movies">Movies</a><a href="https://other.example/films">Films</a>', { headers: { 'content-type': 'text/html' } })
+  try {
+    const request = new Request('https://app.example/api/analyze', { method: 'POST', body: JSON.stringify({ url: 'https://catalog.example/' }) })
+    const result = await (await onRequestPost({ request })).json()
+    assert.deepEqual(result.catalogSections, [{ url: 'https://catalog.example/movies', title: 'Movies' }, { url: 'https://catalog.example/shows', title: 'TV Shows' }])
+  } finally { globalThis.fetch = originalFetch }
+})
+
 test('large listing pages remain discoverable across successive import batches', async () => {
   const originalFetch = globalThis.fetch
   const html = Array.from({ length: 225 }, (_, i) => `<a href="/films/${i}" title="Film ${i}"><img src="/poster.jpg"></a>`).join('')

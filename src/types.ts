@@ -78,6 +78,7 @@ export interface AnalysisResult {
   durationSeconds?: number
   notes?: string[]
   listings?: Array<{ url: string; title: string; poster?: string }>
+  catalogSections?: Array<{ url: string; title: string }>
   suggestedCatalogUrl?: string
   nextCatalogUrl?: string
   analysisUnavailable?: boolean

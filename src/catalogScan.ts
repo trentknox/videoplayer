@@ -4,7 +4,7 @@ type Listing = NonNullable<AnalysisResult['listings']>[number]
 type Analyze = (url: string) => Promise<AnalysisResult>
 
 /** Bounded scan: keep the current page as the cursor if a batch stops mid-page. */
-export async function scanCatalog(start: string, knownUrls: Iterable<string>, analyze: Analyze): Promise<{ listings: Listing[]; cursor?: string }> {
+export async function scanCatalog(start: string, knownUrls: Iterable<string>, analyze: Analyze): Promise<{ listings: Listing[]; cursor?: string; sections: Array<{ url: string; title: string }> }> {
   const origin = new URL(start).origin
   const sameOrigin = (value: string | undefined): value is string => {
     if (!value) return false
@@ -13,6 +13,7 @@ export async function scanCatalog(start: string, knownUrls: Iterable<string>, an
   const known = new Set(knownUrls)
   const visited = new Set<string>()
   const listings: Listing[] = []
+  const sections = new Map<string, { url: string; title: string }>()
   let current: string | undefined = start
   let cursor: string | undefined
   for (let pageCount = 0; current && pageCount < 5; pageCount += 1) {
@@ -20,6 +21,7 @@ export async function scanCatalog(start: string, knownUrls: Iterable<string>, an
     visited.add(current)
     const page: AnalysisResult = await analyze(current)
     if (page.analysisUnavailable) throw new Error('Could not read the catalog page. Your scan position is unchanged; try again.')
+    for (const section of page.catalogSections ?? []) if (sameOrigin(section.url)) sections.set(section.url, section)
     if (!page.listings?.length && sameOrigin(page.suggestedCatalogUrl) && !visited.has(page.suggestedCatalogUrl)) {
       current = page.suggestedCatalogUrl
       cursor = current
@@ -34,11 +36,11 @@ export async function scanCatalog(start: string, knownUrls: Iterable<string>, an
       listings.push(item)
       if (listings.length === 25) {
         cursor = index < items.length - 1 ? current : next
-        return { listings, cursor }
+        return { listings, cursor, sections: [...sections.values()] }
       }
     }
     current = next
     cursor = next
   }
-  return { listings, cursor }
+  return { listings, cursor, sections: [...sections.values()] }
 }

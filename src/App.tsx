@@ -87,6 +87,7 @@ export default function App() {
   const [pageAnalysis, setPageAnalysis] = useState(true)
   const [importing, setImporting] = useState(false)
   const [scanningCatalog, setScanningCatalog] = useState(false)
+  const [catalogSections, setCatalogSections] = useState<Array<{ url: string; title: string }>>([])
   const [notice, setNotice] = useState('')
   const [search, setSearch] = useState('')
   const [playlistName, setPlaylistName] = useState('')
@@ -195,6 +196,7 @@ export default function App() {
     setImporting(true)
     stopCatalogImport.current = false
     setScanningCatalog(true)
+    setCatalogSections([])
     setNotice('Looking for titles on this page…')
     try {
       const source = new URL(draft.url).href
@@ -204,7 +206,8 @@ export default function App() {
       let added = 0
       let batches = 0
       while (start && !stopCatalogImport.current && batches < 40) {
-        const { listings, cursor } = await scanCatalog(start, known, analyzePublicPage)
+        const { listings, cursor, sections } = await scanCatalog(start, known, analyzePublicPage)
+        if (sections.length) setCatalogSections((existing) => [...new Map([...existing, ...sections].map((section) => [section.url, section])).values()])
         if (!listings.length && emptyCursors.has(start)) {
           setNotice(`Added ${added} titles. Pagination repeated; scan stopped at ${start}.`)
           return
@@ -393,6 +396,7 @@ export default function App() {
               <button type="button" className="secondary-button" disabled={importing} onClick={importPageListings}>Import titles listed on this page</button>
               {scanningCatalog && <button type="button" className="secondary-button" onClick={() => { stopCatalogImport.current = true; setNotice('Stopping after the current batch…') }}>Stop catalog scan</button>}
             </form>
+            {catalogSections.length > 0 && <div><p>More catalog sections found. Select one, then import its titles:</p>{catalogSections.map((section) => <button type="button" className="secondary-button" key={section.url} disabled={importing} onClick={() => updateDraft('url', section.url)}>{section.title}</button>)}</div>}
             <p className="fine-print">Vivid saves original source URLs. It does not copy, proxy, DRM-bypass, or rebroadcast media.</p>
             <p className="fine-print">When page analysis is enabled, the URL is sent to the Vivid analysis service.</p>
           </aside>

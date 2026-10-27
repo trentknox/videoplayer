@@ -214,6 +214,21 @@ function discoverCatalogPage(html: string, base: URL): string | undefined {
   return undefined
 }
 
+function discoverCatalogSections(html: string, base: URL): Array<{ url: string; title: string }> {
+  const sections: Array<{ url: string; title: string }> = []
+  const seen = new Set<string>()
+  for (const match of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi)) {
+    const title = match[2].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+    if (!/^(?:movies|films|tv shows|television|series)$/i.test(title)) continue
+    const href = match[1].match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1]
+    const url = toPublicUrl(href && decodeEntities(href), base)
+    if (!url || new URL(url).origin !== base.origin || url === base.href || seen.has(url)) continue
+    seen.add(url)
+    sections.push({ url, title })
+  }
+  return sections
+}
+
 function discoverNextPage(html: string, base: URL): string | undefined {
   for (const match of html.matchAll(/<(?:a|link)\b([^>]*)>/gi)) {
     const tag = match[1]
@@ -293,6 +308,7 @@ export const onRequestPost = async ({ request }: AnalyzeContext): Promise<Respon
     description,
     durationSeconds: 900,
     listings: discoverListings(html, finalUrl),
+    catalogSections: discoverCatalogSections(html, finalUrl),
     suggestedCatalogUrl: discoverCatalogPage(html, finalUrl),
     nextCatalogUrl: discoverNextPage(html, finalUrl),
     notes: [embedUrl
