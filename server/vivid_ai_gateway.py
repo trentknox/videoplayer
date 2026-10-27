@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Authenticated, loopback-only Vivid gateway with a free-model fallback ladder."""
 import json
+import gzip
+import io
 import os
 import threading
 import time
@@ -46,7 +48,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header('Access-Control-Allow-Origin', self.headers['Origin'])
         self.send_header('Access-Control-Allow-Methods', 'GET, PUT, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+        self.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type, Content-Encoding')
         if self.headers.get('Access-Control-Request-Private-Network', '').lower() == 'true':
             self.send_header('Access-Control-Allow-Private-Network', 'true')
         self.send_header('Vary', 'Origin')
@@ -60,7 +62,14 @@ class Handler(BaseHTTPRequestHandler):
     def read_json(self, limit=32768):
         size = int(self.headers.get('Content-Length', '0'))
         if size <= 0 or size > limit: raise ValueError('invalid size')
-        data = json.loads(self.rfile.read(size))
+        body = self.rfile.read(size)
+        encoding = self.headers.get('Content-Encoding', '').lower()
+        if encoding == 'gzip':
+            with gzip.GzipFile(fileobj=io.BytesIO(body)) as compressed:
+                body = compressed.read(limit + 1)
+            if len(body) > limit: raise ValueError('uncompressed body too large')
+        elif encoding not in ('', 'identity'): raise ValueError('unsupported encoding')
+        data = json.loads(body)
         if not isinstance(data, dict): raise ValueError('invalid body')
         return data
 

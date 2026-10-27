@@ -53,9 +53,15 @@ export function applyShared(local: LibraryState, shared: SharedLibrary): Library
 async function call<T>(session: AiSession, method: 'GET' | 'PUT', body?: unknown): Promise<T> {
   const payload = body ? JSON.stringify(body) : undefined
   if (payload && new Blob([payload]).size > 32 * 1024 * 1024) throw new Error('This library exceeds the current 32 MiB sync limit. Your local library has not been sent; export a backup from Settings.')
+  let upload: string | Blob | undefined = payload
+  let compressed = false
+  if (payload && payload.length > 1024 * 1024 && typeof CompressionStream !== 'undefined') {
+    upload = await new Response(new Blob([payload]).stream().pipeThrough(new CompressionStream('gzip'))).blob()
+    compressed = true
+  }
   let response: Response
   try {
-    response = await fetch(`${session.endpoint}/v1/state`, { method, redirect: 'error', credentials: 'omit', headers: { Authorization: `Bearer ${session.token}`, ...(payload ? { 'Content-Type': 'application/json' } : {}) }, body: payload, signal: AbortSignal.timeout(60000) })
+    response = await fetch(`${session.endpoint}/v1/state`, { method, redirect: 'error', credentials: 'omit', headers: { Authorization: `Bearer ${session.token}`, ...(payload ? { 'Content-Type': 'application/json' } : {}), ...(compressed ? { 'Content-Encoding': 'gzip' } : {}) }, body: upload, signal: AbortSignal.timeout(120000) })
   } catch {
     throw new Error(session.endpoint.startsWith('http://127.0.0.1') || session.endpoint.startsWith('http://localhost') ? 'Cannot reach the private gateway. Check the SSH tunnel and allow local-network access for Vivid in Edge, then retry.' : 'Cannot reach the private gateway. Check its connection and retry.')
   }
