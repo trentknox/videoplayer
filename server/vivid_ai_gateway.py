@@ -47,6 +47,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', self.headers['Origin'])
         self.send_header('Access-Control-Allow-Methods', 'GET, PUT, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+        if self.headers.get('Access-Control-Request-Private-Network', '').lower() == 'true':
+            self.send_header('Access-Control-Allow-Private-Network', 'true')
         self.send_header('Vary', 'Origin')
         self.end_headers()
 
