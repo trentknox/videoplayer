@@ -54,7 +54,10 @@ function toPublicUrl(value: string | undefined, base: URL): string | undefined {
 }
 
 function decodeEntities(value: string): string {
-  return value.replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'")
+  return value.replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&apos;/gi, "'").replace(/&nbsp;/gi, ' ').replace(/&#(?:x([0-9a-f]+)|(\d+));/gi, (raw, hex: string | undefined, decimal: string | undefined) => {
+    const code = hex ? Number.parseInt(hex, 16) : Number.parseInt(decimal ?? '', 10)
+    return Number.isInteger(code) && code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff) ? String.fromCodePoint(code) : raw
+  })
 }
 
 function metadata(html: string, property: string): string | undefined {

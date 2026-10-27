@@ -212,3 +212,13 @@ test('extracts public cast links and attributes ratings only to explicitly named
     assert.equal(result.imdbRating,undefined)
   } finally {globalThis.fetch=originalFetch}
 })
+
+test('public listing titles decode zero-padded and hexadecimal character entities', async () => {
+ const oldFetch=globalThis.fetch
+ try {
+  globalThis.fetch=async()=>new Response(`<a href="/watch-movie/test" title="Kevin Hart&#039;s &#x47;uide"><img src="/poster.jpg"></a>`,{headers:{'content-type':'text/html'}})
+  const request=new Request('https://app.example/api/analyze',{method:'POST',body:JSON.stringify({url:'https://catalog.example/'})})
+  const result=await (await onRequestPost({request})).json()
+  assert.equal(result.listings[0].title,"Kevin Hart's Guide")
+ } finally {globalThis.fetch=oldFetch}
+})
