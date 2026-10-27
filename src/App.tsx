@@ -86,6 +86,7 @@ export default function App() {
   const [draft, setDraft] = useState<ImportDraft>(blankDraft)
   const [pageAnalysis, setPageAnalysis] = useState(true)
   const [importing, setImporting] = useState(false)
+  const [scanningCatalog, setScanningCatalog] = useState(false)
   const [notice, setNotice] = useState('')
   const [search, setSearch] = useState('')
   const [playlistName, setPlaylistName] = useState('')
@@ -93,6 +94,7 @@ export default function App() {
   const [channelFilter, setChannelFilter] = useState('')
   const [clock, setClock] = useState(() => new Date())
   const importInput = useRef<HTMLInputElement>(null)
+  const stopCatalogImport = useRef(false)
 
   useEffect(() => {
     loadLibrary().then((loaded) => {
@@ -191,46 +193,55 @@ export default function App() {
   async function importPageListings(): Promise<void> {
     if (!library || !draft.url.trim()) { setNotice('Enter a website URL first.'); return }
     setImporting(true)
+    stopCatalogImport.current = false
+    setScanningCatalog(true)
     setNotice('Looking for titles on this page…')
     try {
       const source = new URL(draft.url).href
-      const start = library.catalogCursors?.[source] ?? source
-      const { listings, cursor } = await scanCatalog(start, library.media.map((item) => item.sourceUrl), analyzePublicPage)
-      if (!listings.length) {
+      let start: string | undefined = library.catalogCursors?.[source] ?? source
+      const known = new Set(library.media.map((item) => item.sourceUrl))
+      const emptyCursors = new Set<string>()
+      let added = 0
+      let batches = 0
+      while (start && !stopCatalogImport.current && batches < 40) {
+        const { listings, cursor } = await scanCatalog(start, known, analyzePublicPage)
+        if (!listings.length && emptyCursors.has(start)) {
+          setNotice(`Added ${added} titles. Pagination repeated; scan stopped at ${start}.`)
+          return
+        }
+        if (!listings.length) emptyCursors.add(start)
+        else emptyCursors.clear()
+        const entries: MediaItem[] = []
+        for (let offset = 0; offset < listings.length; offset += 3) {
+          const batch = listings.slice(offset, offset + 3)
+          const analyzed = await Promise.all(batch.map(async (listing) => {
+            try {
+              const result = await analyzePublicPage(listing.url)
+              return toMediaItem({ ...result, title: result.title === new URL(listing.url).hostname ? listing.title : result.title, poster: result.poster ?? listing.poster }, { ...blankDraft, tags: draft.tags }, true)
+            } catch {
+              return toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster }, { ...blankDraft, tags: draft.tags }, true)
+            }
+          }))
+          entries.push(...analyzed)
+        }
+        for (const item of entries) known.add(item.sourceUrl)
         updateLibrary((current) => {
+          const existing = new Set(current.media.map((item) => item.sourceUrl))
           const cursors = { ...current.catalogCursors }
           if (cursor) cursors[source] = cursor
           else delete cursors[source]
-          return { ...current, catalogCursors: cursors }
+          return { ...current, catalogCursors: cursors, media: [...entries.filter((item) => !existing.has(item.sourceUrl)), ...current.media] }
         })
-        setNotice(cursor ? 'No new titles in this batch. Scan again to continue to later pages.' : 'No new titled links found. Some sites require an API or render their catalog in JavaScript.')
-        return
+        added += entries.length
+        batches += 1
+        start = cursor
+        setNotice(`Added ${added} titles. ${start ? 'Scanning more pages…' : 'Scan complete.'}`)
       }
-      const entries: MediaItem[] = []
-      for (let offset = 0; offset < listings.length; offset += 3) {
-        const batch = listings.slice(offset, offset + 3)
-        const analyzed = await Promise.all(batch.map(async (listing) => {
-          try {
-            const result = await analyzePublicPage(listing.url)
-            return toMediaItem({ ...result, title: result.title === new URL(listing.url).hostname ? listing.title : result.title, poster: result.poster ?? listing.poster }, { ...blankDraft, tags: draft.tags }, true)
-          } catch {
-            return toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster }, { ...blankDraft, tags: draft.tags }, true)
-          }
-        }))
-        entries.push(...analyzed)
-      }
-      updateLibrary((current) => {
-        const existing = new Set(current.media.map((item) => item.sourceUrl))
-        const cursors = { ...current.catalogCursors }
-        if (cursor) cursors[source] = cursor
-        else delete cursors[source]
-        return { ...current, catalogCursors: cursors, media: [...entries.filter((item) => !existing.has(item.sourceUrl)), ...current.media] }
-      })
-      setView('library')
-      setNotice(`Added ${entries.length} entries. Some may be links rather than playable videos; scan again for more titles.`)
+      if (added) setView('library')
+      setNotice(`Added ${added} titles. ${start ? 'Scan paused; import again to continue.' : 'Scan complete.'} Some entries may be website links rather than playable videos.`)
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not inspect the page.')
-    } finally { setImporting(false) }
+    } finally { setImporting(false); setScanningCatalog(false) }
   }
 
   function removeMedia(id: string): void {
@@ -380,6 +391,7 @@ export default function App() {
               <label className="checkbox-row"><input type="checkbox" checked={pageAnalysis} onChange={(event) => setPageAnalysis(event.target.checked)} /> Analyze permitted public-page metadata</label>
               <button className="primary-button" disabled={importing}>{importing ? 'Analyzing…' : 'Analyze & import'}</button>
               <button type="button" className="secondary-button" disabled={importing} onClick={importPageListings}>Import titles listed on this page</button>
+              {scanningCatalog && <button type="button" className="secondary-button" onClick={() => { stopCatalogImport.current = true; setNotice('Stopping after the current batch…') }}>Stop catalog scan</button>}
             </form>
             <p className="fine-print">Vivid saves original source URLs. It does not copy, proxy, DRM-bypass, or rebroadcast media.</p>
             <p className="fine-print">When page analysis is enabled, the URL is sent to the Vivid analysis service.</p>
