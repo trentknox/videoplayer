@@ -179,3 +179,8 @@ input:focus { border-color: #9b90ff; box-shadow: 0 0 0 3px rgba(155,144,255,.14)
 
 .media-card.portrait-poster .card-play { aspect-ratio: 2 / 3; }
 .ai-preview-card .poster-fallback { width: 100%; aspect-ratio: 2 / 3; height: auto; }
+
+.curated-heading { margin-top: 32px; }
+.library-view > .import-card { margin-bottom: 30px; }
+
+.hero-grid:not(.mini-player-grid):not(.theater-mode) { grid-template-columns: minmax(0, 1000px); justify-content: center; }

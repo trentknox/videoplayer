@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { gatewayUrl, searchWithAi } from '../src/aiSearch.ts'
+import { gatewayUrl, searchWithAi, searchByKeywords } from '../src/aiSearch.ts'
 
 test('gateway requires HTTPS except for loopback and rejects embedded credentials', () => {
   assert.equal(gatewayUrl('https://example.test/proxy/'), 'https://example.test/proxy')
@@ -21,4 +21,15 @@ test('AI can select only supplied IDs and cannot create an unrequested channel',
     assert.equal(request.redirect, 'error')
     assert.equal((await searchWithAi({ endpoint: 'https://example.test', token: 'session' }, 'Make a channel', media)).action, 'channel')
   } finally { globalThis.fetch = oldFetch }
+})
+
+test('keyword fallback matches actor metadata and identifies channel requests', () => {
+  const media = [
+    { id: 'a', title: 'The Matrix', actors: ['Keanu Reeves'], tags: [], franchise: 'The Matrix' },
+    { id: 'b', title: 'Unrelated', actors: ['Another Actor'], tags: [] },
+  ]
+  const result = searchByKeywords('Generate a 24/7 Keanu Reeves channel', media)
+  assert.deepEqual(result.ids, ['a'])
+  assert.equal(result.action, 'channel')
+  assert.equal(result.suggestions[0].name, 'The Matrix')
 })

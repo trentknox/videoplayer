@@ -35,3 +35,12 @@ test('unavailable analysis reports an error instead of silently advancing', asyn
   const start = 'https://catalog.example/page/1'
   await assert.rejects(scanCatalog(start, [], async () => ({ ...page(start, []), analysisUnavailable: true })), /position is unchanged/)
 })
+
+test('newer dated titles on a catalog page are discovered before older and undated entries', async () => {
+  const base = 'https://catalog.example/'
+  const analyze = async () => ({ provider: 'embed', kind: 'catalog', sourceUrl: base, embedUrl: base, title: 'Catalog', listings: [
+    { url: base + 'older-2001', title: 'Older' }, { url: base + 'unknown', title: 'Unknown' }, { url: base + 'recent-2025', title: 'Recent' }, { url: base + 'middle', title: 'Middle', year: 2021 },
+  ] })
+  const result = await scanCatalog(base, [], analyze)
+  assert.deepEqual(result.listings.map((item) => item.title), ['Recent', 'Middle', 'Older', 'Unknown'])
+})

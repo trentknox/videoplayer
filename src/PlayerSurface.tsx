@@ -139,7 +139,7 @@ export default function PlayerSurface({ item, onEnded, onStarted, onProgress, au
         ref={videoRef}
         className="media-video"
         controls
-        autoPlay
+        autoPlay={autoPlay}
         playsInline
         onEnded={onEnded}
         onPlay={onStarted}

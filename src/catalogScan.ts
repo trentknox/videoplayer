@@ -27,7 +27,15 @@ export async function scanCatalog(start: string, knownUrls: Iterable<string>, an
       cursor = current
       continue
     }
-    const items = page.listings ?? []
+    // Sort known release years within each page; keep unknown years in source order.
+    const releaseYear = (item: Listing): number => {
+      let path = ''
+      try { path = new URL(item.url, start).pathname } catch { /* Ignore malformed listing URLs. */ }
+      const match = `${item.title} ${path}`.match(/(?:^|[\s_\-/([{])((?:19|20)\d{2})(?=$|[\s_\-/)\]}])/)
+      const year = item.year ?? (match ? Number(match[1]) : 0)
+      return year >= 1900 && year <= new Date().getFullYear() + 1 ? year : 0
+    }
+    const items = (page.listings ?? []).map((item, index) => ({ item, index, year: releaseYear(item) })).sort((a, b) => b.year - a.year || a.index - b.index).map(({ item }) => item)
     const next: string | undefined = sameOrigin(page.nextCatalogUrl) && !visited.has(page.nextCatalogUrl) ? page.nextCatalogUrl : undefined
     for (let index = 0; index < items.length; index += 1) {
       const item = items[index]

@@ -67,6 +67,9 @@ export interface LibraryState {
   history?: PlaybackHistoryEntry[]
   catalogCursors?: Record<string, string>
   catalogJobs?: Record<string, CatalogJob>
+  posterRepairJobs?: Record<string, CatalogJob>
+  posterRepairSeen?: Record<string, string[]>
+  posterRepairDone?: string[]
   sources?: SavedSource[]
 }
 
@@ -106,7 +109,7 @@ export interface AnalysisResult {
   actors?: string[]
   durationSeconds?: number
   notes?: string[]
-  listings?: Array<{ url: string; title: string; poster?: string; season?: number; episode?: number }>
+  listings?: Array<{ url: string; title: string; poster?: string; year?: number; season?: number; episode?: number }>
   catalogSections?: Array<{ url: string; title: string }>
   suggestedCatalogUrl?: string
   nextCatalogUrl?: string

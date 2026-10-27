@@ -5,6 +5,7 @@ const context = await browser.newContext()
 const page = await context.newPage()
 try {
   await page.goto('http://127.0.0.1:4181/')
+  await page.getByRole('button', { name: 'player', exact: true }).click()
   const video = page.locator('video')
   await video.waitFor()
   await video.evaluate(async (element) => {

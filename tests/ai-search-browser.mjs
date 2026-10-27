@@ -4,6 +4,7 @@ const browser = await chromium.launch({ executablePath: 'C:/Program Files (x86)/
 const context = await browser.newContext()
 const page = await context.newPage()
 try {
+  await page.route('https://catalog.example/poster.jpg', async (route) => route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l5QAAAAASUVORK5CYII=', 'base64') }))
   await page.route('**/api/analyze', async (route) => {
     const sourceUrl = route.request().postDataJSON().url
     await route.fulfill({ json: { provider: 'embed', kind: 'catalog', sourceUrl, embedUrl: sourceUrl, title: 'Catalog', listings: [{ url: 'https://catalog.example/new-video.mp4', title: 'New source video', poster: 'https://catalog.example/poster.jpg' }] } })
@@ -18,7 +19,7 @@ try {
   await page.goto('http://127.0.0.1:4181/')
   await page.getByLabel('Search your library').fill('Create a 24/7 Keanu Reeves channel')
   await page.getByRole('button', { name: 'Ask AI' }).click()
-  await page.getByRole('dialog').getByText(/AI search is not connected/).waitFor()
+  await page.getByRole('dialog').getByText(/AI is unavailable/).waitFor()
   await page.getByRole('button', { name: 'Close search results' }).click()
   await page.getByRole('button', { name: 'settings', exact: true }).click()
   await page.waitForTimeout(400)
@@ -30,6 +31,11 @@ try {
     db.close()
   })
   await page.reload()
+  await page.getByLabel('Search your library').fill('New source video')
+  await page.getByRole('button', { name: 'Ask AI' }).click()
+  await page.getByRole('dialog').getByText(/AI is unavailable; these are keyword matches/).waitFor()
+  await page.getByRole('region', { name: 'AI search results' }).getByRole('button', { name: 'New source video', exact: true }).waitFor()
+  await page.getByRole('button', { name: 'Close search results' }).click()
   await page.getByRole('button', { name: 'settings', exact: true }).click()
   await page.getByLabel('AI gateway URL').fill('https://ai.example')
   await page.getByLabel('AI account username').fill('demo')

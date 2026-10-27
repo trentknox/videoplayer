@@ -12,14 +12,14 @@ import { adjacentChannel } from './channelNavigation'
 import { startUpdateMonitor } from './updateMonitor'
 import { posterSources } from './posters'
 import { readPlayback, saveSelection, saveProgress } from './playbackSession'
-import { aiLogin, aiLogout, searchWithAi } from './aiSearch'
+import { aiLogin, aiLogout, searchWithAi, searchByKeywords } from './aiSearch'
 import { discoverForSearch } from './searchSources'
 import type { AiSession, AiSearchResult } from './aiSearch'
 import type { LibraryFilters } from './filters'
 import { formatClock, makeSchedule, nowPlaying } from './scheduler'
 import type { AnalysisResult, Channel, ImportDraft, LibraryState, MediaItem, Playlist } from './types'
 
-type View = 'home' | 'library' | 'playlists' | 'channels' | 'history' | 'settings'
+type View = 'home' | 'player' | 'library' | 'playlists' | 'channels' | 'history' | 'settings'
 
 declare global {
   interface Window {
@@ -107,6 +107,8 @@ export default function App() {
   const [channelSlotStart, setChannelSlotStart] = useState<string>()
   const [view, setView] = useState<View>('home')
   const [minimizedPlayer, setMinimizedPlayer] = useState(false)
+  const [playerEngaged, setPlayerEngaged] = useState(false)
+  const [shouldAutoPlay, setShouldAutoPlay] = useState(false)
   const [theaterMode, setTheaterMode] = useState(false)
   const [draft, setDraft] = useState<ImportDraft>(blankDraft)
   const [pageAnalysis, setPageAnalysis] = useState(true)
@@ -137,6 +139,7 @@ export default function App() {
   const stopCatalogImport = useRef(false)
   const sourceSyncLock = useRef(false)
   const importingRef = useRef(false)
+  const lastPosterRepair = useRef(0)
   importingRef.current = importing
 
   useEffect(() => startUpdateMonitor(() => setUpdateAvailable(true), () => importingRef.current), [])
@@ -149,6 +152,7 @@ export default function App() {
       setActiveId(item?.id ?? loaded.media[0]?.id)
       if (item && previous) {
         setResumeTarget({ id: item.id, position: previous.position })
+        setPlayerEngaged(true)
         if (previous.channelId && loaded.channels.some((entry) => entry.id === previous.channelId)) setActiveChannelId(previous.channelId)
         else if (previous.playlistId && loaded.playlists.some((entry) => entry.id === previous.playlistId && entry.mediaIds.includes(item.id))) setActivePlaylistId(previous.playlistId)
       }
@@ -156,10 +160,10 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!library || !activeId) return
+    if (!library || !activeId || !playerEngaged) return
     saveSelection(window.sessionStorage, { mediaId: activeId, playlistId: activePlaylistId, channelId: activeChannelId })
     setResumeTarget((current) => current && current.id !== activeId ? undefined : current)
-  }, [library, activeId, activePlaylistId, activeChannelId])
+  }, [library, activeId, activePlaylistId, activeChannelId, playerEngaged])
 
   useEffect(() => {
     if (library) void saveLibrary(library).catch(() => setNotice('Could not save your library on this device. Export a backup from Settings.'))
@@ -202,15 +206,21 @@ export default function App() {
     updateLibrary((current) => ({ ...current, sources: current.sources?.map((entry) => entry.id === source.id ? { ...entry, lastChecked: new Date().toISOString() } : entry) }))
     void importPageListings({ sourceUrl: source.url, background: true }).finally(() => { sourceSyncLock.current = false })
   }, [library, importing, clock])
+  useEffect(() => {
+    if (!library || importing || sourceSyncLock.current || Date.now() - lastPosterRepair.current < 30_000) return
+    const hasMissing = library.media.some((item) => (!item.poster || /\/images\/backdrops\//i.test(item.poster)) && (item.provider === 'embed' || item.kind === 'catalog'))
+    if (!hasMissing) return
+    lastPosterRepair.current = Date.now()
+    void repairPosters()
+  }, [library, importing, clock])
   const activePlaylist = library?.playlists.find((playlist) => playlist.id === activePlaylistId)
   const visibleMedia = useMemo(() => {
     if (!library) return []
     return filterLibrary(library.media, { ...filters, query: search })
   }, [library, search, filters])
-  const homeGallery = useMemo(() => {
-    if (!library) return []
-    return filterLibrary(library.media, { ...defaultFilters, query: homeSearch, sort: 'rating', order: 'desc' }).slice(0, 12)
-  }, [library, homeSearch])
+  const topRated = useMemo(() => library ? filterLibrary(library.media.filter((item) => item.rating !== undefined), { ...defaultFilters, sort: 'rating', order: 'desc' }).slice(0, 12) : [], [library])
+  const newReleases = useMemo(() => library ? filterLibrary(library.media.filter((item) => item.year !== undefined), { ...defaultFilters, sort: 'year', order: 'desc' }).slice(0, 12) : [], [library])
+  const recentlyAdded = useMemo(() => library ? filterLibrary(library.media, { ...defaultFilters, sort: 'added', order: 'desc' }).slice(0, 12) : [], [library])
 
   const allSchedules = useMemo(() => {
     if (!library) return new Map<string, ReturnType<typeof makeSchedule>>()
@@ -236,7 +246,7 @@ export default function App() {
   }, [activeChannelId, library])
 
   useEffect(() => {
-    if (!activeChannelId || !library || view !== 'home') return
+    if (!activeChannelId || !library || view !== 'player') return
     const onKey = (event: KeyboardEvent) => {
       const target = event.target
       if (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(target.tagName))) return
@@ -260,6 +270,7 @@ export default function App() {
 
   function recordPlayback(): void {
     if (!activeId) return
+    setPlayerEngaged(true)
     const now = Date.now()
     updateLibrary((current) => {
       const previous = current.history ?? []
@@ -355,9 +366,9 @@ export default function App() {
             try {
               const result = await analyzePublicPage(listing.url)
               if (result.listings?.some((entry) => entry.season !== undefined && entry.episode !== undefined)) nestedSeries.push({ url: listing.url, series: listing.title })
-              return toMediaItem({ ...result, title: result.title === new URL(listing.url).hostname ? listing.title : result.title, poster: result.poster ?? listing.poster }, { ...blankDraft, tags: importDraft.tags, series: importDraft.series || job.seriesNames?.[start!] || '', season: listing.season?.toString() ?? importDraft.season, episode: listing.episode?.toString() ?? importDraft.episode }, true)
+              return toMediaItem({ ...result, title: result.title === new URL(listing.url).hostname ? listing.title : result.title, poster: listing.poster ?? result.poster, year: result.year ?? listing.year }, { ...blankDraft, tags: importDraft.tags, series: importDraft.series || job.seriesNames?.[start!] || '', season: listing.season?.toString() ?? importDraft.season, episode: listing.episode?.toString() ?? importDraft.episode }, true)
             } catch {
-              return toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster }, { ...blankDraft, tags: importDraft.tags, series: importDraft.series || job.seriesNames?.[start!] || '', season: listing.season?.toString() ?? importDraft.season, episode: listing.episode?.toString() ?? importDraft.episode }, true)
+              return toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster, year: listing.year }, { ...blankDraft, tags: importDraft.tags, series: importDraft.series || job.seriesNames?.[start!] || '', season: listing.season?.toString() ?? importDraft.season, episode: listing.episode?.toString() ?? importDraft.episode }, true)
             }
           }))
           entries.push(...analyzed)
@@ -403,13 +414,21 @@ export default function App() {
     if (!library || !homeSearch.trim()) return
     setAiDialogOpen(true)
     setAiResult(undefined)
-    if (!aiSession) { setAiFeedback('AI search is not connected. Connect your private AI gateway in Settings to search and create channels.'); return }
     setAiFeedback('Preparing your search…')
     setAiBusy(true)
     try {
       let media = library.media
       let sourceStatus = ''
-      if ((library.sources?.length ?? 0) > 0) {
+      const searchSources = [...(library.sources ?? [])]
+      for (const item of media) {
+        if (item.provider !== 'embed' && item.kind !== 'catalog') continue
+        try {
+          const url = new URL(item.sourceUrl)
+          if (!['http:', 'https:'].includes(url.protocol) || searchSources.some((entry) => { try { return new URL(entry.url).origin === url.origin } catch { return false } })) continue
+          searchSources.push({ id: `inferred-${url.origin}`, url: `${url.origin}/` })
+        } catch { /* Ignore invalid stored URLs. */ }
+      }
+      if (searchSources.length > 0) {
         if (sourceSyncLock.current || importingRef.current) sourceStatus = ' A source scan is already running; search may be incomplete.'
         else {
           sourceSyncLock.current = true
@@ -417,14 +436,14 @@ export default function App() {
           importingRef.current = true
           try {
             setAiFeedback('Checking saved sources for more titles…')
-            const discovered = await discoverForSearch(library.sources ?? [], media.map((item) => item.sourceUrl), library.catalogJobs ?? {}, analyzePublicPage)
-            const entries = discovered.listings.map((listing) => toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster }, { ...blankDraft, url: listing.url, season: listing.season?.toString() ?? '', episode: listing.episode?.toString() ?? '' }, true))
+            const discovered = await discoverForSearch(searchSources, media.map((item) => item.sourceUrl), library.catalogJobs ?? {}, analyzePublicPage)
+            const entries = discovered.listings.map((listing) => toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster, year: listing.year }, { ...blankDraft, url: listing.url, season: listing.season?.toString() ?? '', episode: listing.episode?.toString() ?? '' }, true))
             media = [...entries, ...media]
             updateLibrary((current) => {
               const known = new Set(current.media.map((item) => item.sourceUrl))
               const jobs = { ...current.catalogJobs }
-              for (const source of (library.sources ?? []).slice(0, 3)) {
-                if (!current.sources?.some((entry) => entry.url === source.url)) continue
+              for (const source of searchSources.slice(0, 3)) {
+                if (!source.id.startsWith('inferred-') && !current.sources?.some((entry) => entry.url === source.url)) continue
                 if (discovered.jobs[source.url]) jobs[source.url] = discovered.jobs[source.url]
                 else delete jobs[source.url]
               }
@@ -433,13 +452,31 @@ export default function App() {
             sourceStatus = ` Checked saved sources and found ${entries.length} new titles.${discovered.incomplete ? ' Some sources are incomplete or unavailable; search again to continue.' : ''}`
           } finally { sourceSyncLock.current = false; importingRef.current = false; setImporting(false) }
         }
-      }
+      } else sourceStatus = ' No sources are saved yet; add one in Library to search beyond this collection.'
       setAiFeedback('Finding the best matches…')
-      const result = await searchWithAi(aiSession, homeSearch, media)
+      let result: AiSearchResult
+      let keywordFallback = !aiSession
+      if (aiSession) {
+        try { result = await searchWithAi(aiSession, homeSearch, media) }
+        catch { keywordFallback = true; result = searchByKeywords(homeSearch, media) }
+      } else result = searchByKeywords(homeSearch, media)
       setAiResult(result)
-      setAiFeedback((result.ids.length ? `Found ${result.ids.length} titles. Review the preview below.` : 'AI found no matching titles in the items it examined.') + sourceStatus)
+      setAiFeedback((result.ids.length ? `Found ${result.ids.length} titles. Review the preview below.` : 'No matching titles were found in the items examined.') + sourceStatus + (keywordFallback ? ' AI is unavailable; these are keyword matches.' : ''))
     } catch (error) { setAiFeedback(error instanceof Error ? error.message : 'AI search failed.') }
     finally { setAiBusy(false) }
+  }
+
+  function playCollection(name: string, media: MediaItem[]): void {
+    if (!media.length) return
+    const playlist: Playlist = { id: makeId('playlist'), name, mediaIds: media.map((item) => item.id), createdAt: new Date().toISOString() }
+    updateLibrary((current) => ({ ...current, playlists: [playlist, ...current.playlists] }))
+    setActiveChannelId(undefined)
+    setActivePlaylistId(playlist.id)
+    setActiveId(media[0].id)
+    setPlayerEngaged(true)
+    setShouldAutoPlay(true)
+    setMinimizedPlayer(false)
+    setView('player')
   }
 
   function saveAiPreview(startChannel: boolean, suggestion?: { name: string; ids: string[] }): void {
@@ -455,10 +492,60 @@ export default function App() {
       setActivePlaylistId(undefined)
       setActiveId(mediaIds[0])
       setActiveChannelId(channel.id)
-      setView('home')
+      setPlayerEngaged(true)
+      setShouldAutoPlay(true)
+      setMinimizedPlayer(false)
+      setView('player')
       window.requestAnimationFrame(() => playerPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
       setNotice(`Created ${playlist.name} and started its channel.`)
     } else { setView('playlists'); setNotice(`Saved playlist ${playlist.name}.`) }
+  }
+
+  async function repairPosters(manual = false): Promise<void> {
+    if (!library || sourceSyncLock.current || importingRef.current) return
+    const urls = new Set<string>()
+    for (const item of library.media) {
+      if (item.poster && !/\/images\/backdrops\//i.test(item.poster)) continue
+      if (item.provider !== 'embed' && item.kind !== 'catalog') continue
+      try {
+        const source = new URL(item.sourceUrl)
+        if (!['http:', 'https:'].includes(source.protocol)) continue
+        const saved = library.sources?.find((entry) => { try { return new URL(entry.url).origin === source.origin } catch { return false } })
+        urls.add(saved?.url ?? `${source.origin}/`)
+      } catch { /* Ignore invalid saved links. */ }
+    }
+    const sources = [...urls].filter((url) => manual || !library.posterRepairDone?.includes(url)).slice(0, 3)
+    if (!sources.length) { if (manual) setNotice('No missing catalog posters were found to repair.'); return }
+    sourceSyncLock.current = true
+    importingRef.current = true
+    setImporting(true)
+    let repaired = 0
+    let failed = 0
+    let incomplete = false
+    try {
+      for (const url of sources) {
+        const seen = manual && library.posterRepairDone?.includes(url) ? [] : library.posterRepairSeen?.[url] ?? []
+        const jobs = manual && library.posterRepairDone?.includes(url) ? {} : library.posterRepairJobs ?? {}
+        const found = await discoverForSearch([{ id: url, url }], seen, jobs, analyzePublicPage)
+        const posters = new Map(found.listings.filter((entry) => entry.poster).map((entry) => [entry.url, entry.poster!]))
+        failed += found.failed
+        repaired += library.media.filter((item) => posters.has(item.sourceUrl) && (!item.poster || /\/images\/backdrops\//i.test(item.poster))).length
+        incomplete ||= found.incomplete
+        updateLibrary((current) => {
+          const nextJobs = { ...current.posterRepairJobs }
+          if (found.jobs[url]) nextJobs[url] = found.jobs[url]
+          else delete nextJobs[url]
+          const done = new Set(current.posterRepairDone ?? [])
+          if (!found.incomplete || found.failed) done.add(url)
+          else done.delete(url)
+          return { ...current, media: current.media.map((item) => {
+            const poster = posters.get(item.sourceUrl)
+            return poster && (!item.poster || /\/images\/backdrops\//i.test(item.poster)) ? { ...item, poster, contentType: item.contentType ?? (/\/watch-movie\//i.test(item.sourceUrl) ? 'movie' : undefined) } : item
+          }), posterRepairJobs: nextJobs, posterRepairSeen: { ...current.posterRepairSeen, [url]: [...new Set([...seen, ...found.listings.map((entry) => entry.url)])] }, posterRepairDone: [...done] }
+        })
+      }
+      if (manual) setNotice(`Updated ${repaired} posters.${failed ? ` Could not read ${failed} source${failed === 1 ? '' : 's'}; try again later.` : incomplete ? ' The catalog scan will continue while Vivid is open.' : ''}`)
+    } finally { sourceSyncLock.current = false; importingRef.current = false; setImporting(false) }
   }
 
   function addSource(event: FormEvent<HTMLFormElement>): void {
@@ -488,7 +575,10 @@ export default function App() {
     setActiveChannelId(undefined)
     setActivePlaylistId(undefined)
     setActiveId(id)
-    setView('home')
+    setPlayerEngaged(true)
+    setShouldAutoPlay(true)
+    setMinimizedPlayer(false)
+    setView('player')
     window.requestAnimationFrame(() => playerPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
 
   }
@@ -587,7 +677,10 @@ export default function App() {
     setActiveId(currentSlot.mediaId)
     setActivePlaylistId(undefined)
     setActiveChannelId(channel.id)
-    setView('home')
+    setPlayerEngaged(true)
+    setShouldAutoPlay(true)
+    setMinimizedPlayer(false)
+    setView('player')
     window.requestAnimationFrame(() => playerPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
     setNotice(`${channel.name} is live now.`)
   }
@@ -615,7 +708,7 @@ export default function App() {
           <span className="brand-mark">V</span><span>Vivid</span>
         </button>
         <nav aria-label="Main navigation">
-          {(['home', 'library', 'playlists', 'channels', 'history', 'settings'] as View[]).map((name) => (
+          {(['home', 'player', 'library', 'playlists', 'channels', 'history', 'settings'] as View[]).map((name) => (
             <button key={name} className={view === name ? 'nav-active' : ''} onClick={() => setView(name)}>{name}</button>
           ))}
         </nav>
@@ -638,21 +731,24 @@ export default function App() {
           {aiDialogOpen && <div className="ai-dialog-backdrop" onClick={() => setAiDialogOpen(false)}><section className="ai-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-dialog-title" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === 'Escape') setAiDialogOpen(false) }}>
             <div className="ai-dialog-heading"><div><span className="section-eyebrow">AI SEARCH</span><h2 id="ai-dialog-title">{aiResult?.name ?? 'Your request'}</h2></div><button className="secondary-button" aria-label="Close search results" autoFocus onClick={() => setAiDialogOpen(false)}>×</button></div>
             <p className="ai-dialog-query">{homeSearch}</p><p role="status">{aiFeedback}</p>
-            {!aiSession && <button className="primary-button" onClick={() => { setAiDialogOpen(false); setView('settings') }}>Connect AI in Settings</button>}
+            {!aiSession && !aiBusy && <button className="secondary-button" onClick={() => { setAiDialogOpen(false); setView('settings') }}>Connect AI in Settings</button>}
             {aiResult && <section aria-label="AI search results"><p>{aiResult.ids.length} matches · examined {aiResult.examined} of {aiResult.total} library titles{aiResult.examined < aiResult.total ? ' (results may be incomplete)' : ''}</p>
               <div className="ai-preview-grid">{aiResult.ids.map((id) => { const item = library.media.find((entry) => entry.id === id); return item ? <button className="ai-preview-card" key={id} onClick={() => { setAiDialogOpen(false); playFromLibrary(id) }}><PosterImage item={item} /><span>{item.title}</span></button> : null })}</div>
               {aiResult.suggestions.length > 0 && <section className="ai-suggestions"><h3>Suggested channels</h3>{aiResult.suggestions.map((suggestion) => <div className="ai-suggestion" key={suggestion.name}><div><strong>{suggestion.name}</strong><p>{suggestion.ids.map((id) => library.media.find((item) => item.id === id)?.title).filter(Boolean).join(' · ')}</p></div><button className="secondary-button" onClick={() => saveAiPreview(true, suggestion)}>Start {suggestion.name}</button></div>)}</section>}
               {aiResult.ids.length > 0 && <div className="ai-preview-actions"><button className="primary-button" onClick={() => saveAiPreview(true)}>Create playlist &amp; start channel</button><button className="secondary-button" onClick={() => saveAiPreview(false)}>Save playlist</button></div>}
             </section>}
           </section></div>}
-          <h2>Explore your library</h2>
-          <MediaGrid media={homeGallery} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} />
+          <div className="section-heading curated-heading"><h2>Top rated in your library</h2>{topRated.length > 0 && <button className="secondary-button" onClick={() => playCollection('Top rated', topRated)}>Play as playlist</button>}</div>
+          {topRated.length ? <MediaGrid media={topRated} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} /> : <p>Add titles with ratings to see top-rated picks here.</p>}
+          <div className="section-heading curated-heading"><h2>New releases in your library</h2>{newReleases.length > 0 && <button className="secondary-button" onClick={() => playCollection('New releases', newReleases)}>Play as playlist</button>}</div>
+          {newReleases.length ? <MediaGrid media={newReleases} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} /> : <p>Add titles with release dates to see new releases here.</p>}
+          <div className="section-heading curated-heading"><h2>Recently added</h2>{recentlyAdded.length > 0 && <button className="secondary-button" onClick={() => playCollection('Recently added', recentlyAdded)}>Play as playlist</button>}</div><MediaGrid media={recentlyAdded} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} />
         </section>
-        <section className={`hero-grid ${view !== 'home' || minimizedPlayer ? 'mini-player-grid' : theaterMode ? 'theater-mode' : ''}`} hidden={view !== 'home' && !active}>
+        <section className={`hero-grid ${view !== 'player' || minimizedPlayer ? 'mini-player-grid' : theaterMode ? 'theater-mode' : ''}`} hidden={view !== 'player' && (!active || !playerEngaged)}>
           <div className="player-panel" ref={playerPanel}>
-            {view !== 'home' || minimizedPlayer ? <button className="mini-player-return" onClick={() => { setMinimizedPlayer(false); setView('home') }}>Return to player ↗</button> : <div className="player-toolbar"><button onClick={() => setTheaterMode((value) => !value)} aria-pressed={theaterMode}>{theaterMode ? 'Exit theater mode' : 'Theater mode'}</button><button onClick={() => setMinimizedPlayer(true)}>Mini-player ↘</button></div>}
+            {view !== 'player' || minimizedPlayer ? <button className="mini-player-return" onClick={() => { setMinimizedPlayer(false); setView('player') }}>Return to player ↗</button> : <div className="player-toolbar"><button onClick={() => setTheaterMode((value) => !value)} aria-pressed={theaterMode}>{theaterMode ? 'Exit theater mode' : 'Theater mode'}</button><button onClick={() => setMinimizedPlayer(true)}>Mini-player ↘</button></div>}
             <div className="section-eyebrow">NOW PLAYING</div>
-            <PlayerSurface key={activeChannelId ? channelSlotId : activeId} item={activePlayer} resumeAt={!activeChannelId && resumeTarget && resumeTarget.id === activeId ? resumeTarget.position : undefined} onProgress={(position) => { if (activeId) saveProgress(window.sessionStorage, activeId, position) }} onStarted={recordPlayback} onEnded={activePlaylist ? nextInPlaylist : undefined} autoPlay={Boolean(activePlaylist || activeChannelId || (resumeTarget && resumeTarget.id === activeId && resumeTarget.position > 0))} slotStart={activeChannelId ? channelSlotStart : undefined} />
+            <PlayerSurface key={activeChannelId ? channelSlotId : activeId} item={activePlayer} resumeAt={!activeChannelId && resumeTarget && resumeTarget.id === activeId ? resumeTarget.position : undefined} onProgress={(position) => { if (activeId) saveProgress(window.sessionStorage, activeId, position) }} onStarted={recordPlayback} onEnded={activePlaylist ? nextInPlaylist : undefined} autoPlay={Boolean(shouldAutoPlay || activePlaylist || activeChannelId || (resumeTarget && resumeTarget.id === activeId && resumeTarget.position > 0))} slotStart={activeChannelId ? channelSlotStart : undefined} />
             <div className="now-playing-meta">
               <div>
                 <h1>{active?.title ?? 'Your media, one screen.'}</h1>
@@ -663,7 +759,14 @@ export default function App() {
               {active && <div>{activePlaylist && <button className="secondary-button" onClick={nextInPlaylist}>Next in {activePlaylist.name} →</button>} <button className="secondary-button" onClick={() => addToWatchLater(active.id)}>＋ Watch later</button></div>}
             </div>
           </div>
-          <aside className="import-card" hidden={view !== 'home' || minimizedPlayer || theaterMode}>
+
+        </section>
+
+
+      </>
+
+      {view === 'library' && <section className="content-section library-view">
+          <aside className="import-card">
             <div className="section-eyebrow">UNIVERSAL IMPORTER</div>
             <h2>Paste a source. Build your world.</h2>
             <p>Single videos, playlists, channels, permitted public pages, direct streams, Plex sources, YouTube, Twitch, and Cloudflare Stream.</p>
@@ -692,15 +795,6 @@ export default function App() {
             <p className="fine-print">Vivid saves original source URLs. It does not copy, proxy, DRM-bypass, or rebroadcast media.</p>
             <p className="fine-print">When page analysis is enabled, the URL is sent to the Vivid analysis service.</p>
           </aside>
-        </section>
-
-        <section className="content-section" hidden={view !== 'home'}>
-          <div className="section-heading"><div><span className="section-eyebrow">YOUR LIBRARY</span><h2>Continue watching</h2></div><button className="text-button" onClick={() => setView('library')}>Open library →</button></div>
-          <MediaGrid media={library.media.slice(0, 6)} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} />
-        </section>
-      </>
-
-      {view === 'library' && <section className="content-section library-view">
         <div className="section-heading"><div><span className="section-eyebrow">PRIVATE CATALOG</span><h1>Library</h1></div><input className="search-input" placeholder="Search title, actor, franchise, tag…" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
         <div className="library-filters">
           <label>Type<select value={filters.type} onChange={(event) => setFilters((value) => ({ ...value, type: event.target.value }))}><option value="">All types</option><option value="movie">Movies</option><option value="series">Series</option><option value="episode">Episodes</option></select></label>
@@ -711,6 +805,7 @@ export default function App() {
           <label>Order<select value={filters.order} onChange={(event) => setFilters((value) => ({ ...value, order: event.target.value as LibraryFilters['order'] }))}><option value="desc">Descending</option><option value="asc">Ascending</option></select></label>
           <button className="secondary-button" onClick={() => { setFilters(defaultFilters); setSearch('') }}>Clear</button>
         </div>
+        <button className="secondary-button" disabled={importing} onClick={() => void repairPosters(true)}>Refresh missing posters</button>
         <div className="filter-summary">{visibleMedia.length} item{visibleMedia.length === 1 ? '' : 's'} · Stored in this browser</div>
         <MediaGrid media={visibleMedia} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} />
       </section>}
@@ -720,7 +815,7 @@ export default function App() {
         <form className="inline-form" onSubmit={createPlaylist}><input value={playlistName} onChange={(event) => setPlaylistName(event.target.value)} placeholder="New playlist name" /><button className="primary-button">Create playlist</button></form>
         {deletedPlaylist && <button className="secondary-button" onClick={undoPlaylistDelete}>Undo delete of {deletedPlaylist.playlist.name}</button>}
         <div className="playlist-grid">
-          {library.playlists.map((playlist) => <PlaylistCard key={playlist.id} playlist={playlist} media={library.media} onDelete={() => deletePlaylist(playlist)} onCreateChannel={() => createChannelFromPlaylist(playlist)} onRename={(name) => updateLibrary((current) => ({ ...current, playlists: current.playlists.map((entry) => entry.id === playlist.id ? { ...entry, name } : entry) }))} onChange={(id, add) => updatePlaylist(playlist.id, id, add)} onMove={(id, direction) => moveInPlaylist(playlist.id, id, direction)} onPlay={(id) => { setActiveChannelId(undefined); setActivePlaylistId(playlist.id); setActiveId(id); setView('home') }} />)}
+          {library.playlists.map((playlist) => <PlaylistCard key={playlist.id} playlist={playlist} media={library.media} onDelete={() => deletePlaylist(playlist)} onCreateChannel={() => createChannelFromPlaylist(playlist)} onRename={(name) => updateLibrary((current) => ({ ...current, playlists: current.playlists.map((entry) => entry.id === playlist.id ? { ...entry, name } : entry) }))} onChange={(id, add) => updatePlaylist(playlist.id, id, add)} onMove={(id, direction) => moveInPlaylist(playlist.id, id, direction)} onPlay={(id) => { setActiveChannelId(undefined); setActivePlaylistId(playlist.id); setActiveId(id); setPlayerEngaged(true); setShouldAutoPlay(true); setMinimizedPlayer(false); setView('player') }} />)}
         </div>
       </section>}
 

@@ -253,8 +253,8 @@ async function discoverSitePlayers(html: string, base: URL): Promise<Array<{ nam
   return []
 }
 
-function discoverListings(html: string, base: URL): Array<{ url: string; title: string; poster?: string; season?: number; episode?: number }> {
-  const items: Array<{ url: string; title: string; poster?: string; season?: number; episode?: number }> = []
+function discoverListings(html: string, base: URL): Array<{ url: string; title: string; poster?: string; year?: number; season?: number; episode?: number }> {
+  const items: Array<{ url: string; title: string; poster?: string; year?: number; season?: number; episode?: number }> = []
   const seen = new Set<string>()
   const attribute = (tag: string, name: string) => tag.match(new RegExp(`(?:^|\\s)${name}\\s*=\\s*["']([^"']+)["']`, 'i'))?.[1]
   for (const match of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi)) {
@@ -265,7 +265,17 @@ function discoverListings(html: string, base: URL): Array<{ url: string; title: 
     const url = new URL(href)
     url.hash = ''
     if (url.origin !== base.origin || url.pathname === '/' || url.pathname === base.pathname || seen.has(url.href)) continue
-    const image = content.match(/<img\b([^>]*)>/i)?.[1] ?? ''
+    let image = content.match(/<img\b([^>]*)>/i)?.[1] ?? ''
+    if (!image && match.index !== undefined) {
+      // Many catalog cards place the image immediately before their overlay link.
+      const preceding = html.slice(Math.max(0, match.index - 3000), match.index)
+      const card = preceding.match(/<div\b[^>]*class=["'][^"']*\bfilm-poster\b[^"']*["'][^>]*>[\s\S]*$/i)?.[0]
+      if (card) {
+        const imageMatch = [...card.matchAll(/<img\b([^>]*)>/gi)].at(-1)
+        const afterImage = imageMatch?.index === undefined ? '' : card.slice(imageMatch.index + imageMatch[0].length)
+        if (imageMatch && !/<a\b/i.test(afterImage)) image = imageMatch[1]
+      }
+    }
     const episodeMatch = url.pathname.match(/(?:^|\/|[-_.])s(\d{1,3})[-_.]e(\d{1,3})(?:\/|$|[-_.])/i)
     if (!image && !episodeMatch && !/^\/watch(?:[-_][^/]+)?\/[^/]+/i.test(url.pathname)) continue
     const title = attribute(tag, 'title') ?? attribute(tag, 'aria-label') ?? attribute(image, 'alt')
@@ -279,7 +289,10 @@ function discoverListings(html: string, base: URL): Array<{ url: string; title: 
     }).filter((candidate): candidate is { url: string; rank: number } => Boolean(candidate.url)).sort((a, b) => b.rank - a.rank)
     const poster = srcset[0]?.url ?? ['data-original', 'data-lazy-src', 'data-src', 'src'].map((name) => toPublicUrl(decodeEntities(attribute(image, name) ?? ''), base)).find(Boolean)
     seen.add(url.href)
-    items.push({ url: url.href, title: decodeEntities(title.trim()).slice(0, 200), poster, season: episodeMatch ? Number(episodeMatch[1]) : undefined, episode: episodeMatch ? Number(episodeMatch[2]) : undefined })
+    const yearMatch = `${title} ${url.pathname}`.match(/(?:^|[\s_\-/([{])((?:19|20)\d{2})(?=$|[\s_\-/)\]}])/)
+    const possibleYear = yearMatch ? Number(yearMatch[1]) : 0
+    const year = possibleYear >= 1900 && possibleYear <= new Date().getFullYear() + 1 ? possibleYear : undefined
+    items.push({ url: url.href, title: decodeEntities(title.trim()).slice(0, 200), poster, year, season: episodeMatch ? Number(episodeMatch[1]) : undefined, episode: episodeMatch ? Number(episodeMatch[2]) : undefined })
   }
   return items
 }

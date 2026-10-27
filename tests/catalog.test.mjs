@@ -164,3 +164,13 @@ test('catalog thumbnails prefer the highest public srcset and lazy image sources
     assert.deepEqual(result.listings.map((entry) => entry.poster), ['https://catalog.example/large.jpg', 'https://catalog.example/original.jpg'])
   } finally { globalThis.fetch = originalFetch }
 })
+
+test('catalog poster sibling is associated with its overlay link', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(`<div class="film-poster"><div class="pick">HD</div><img data-src="https://images.example/poster.webp" alt="Film One"><a href="/watch-movie/film-one" title="Film One"><i>Play</i></a></div>`, { headers: { 'content-type': 'text/html' } })
+  try {
+    const request = new Request('https://app.example/api/analyze', { method: 'POST', body: JSON.stringify({ url: 'https://catalog.example/movies' }) })
+    const result = await (await onRequestPost({ request })).json()
+    assert.equal(result.listings[0].poster, 'https://images.example/poster.webp')
+  } finally { globalThis.fetch = originalFetch }
+})

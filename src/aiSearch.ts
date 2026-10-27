@@ -71,3 +71,19 @@ export async function searchWithAi(session: AiSession, query: string, media: Med
   const action = /\bchannel\b/i.test(query) ? 'channel' : /\bplaylist\b/i.test(query) ? 'playlist' : 'search'
   return { name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim().slice(0, 100) : query.trim().slice(0, 100), ids, action, suggestions, examined: entries.length, total: media.length }
 }
+
+/** Explicitly labeled fallback for searching known metadata when no AI session is available. */
+export function searchByKeywords(query: string, media: MediaItem[]): AiSearchResult {
+  const ignored = new Set(['the', 'and', 'for', 'all', 'movies', 'movie', 'series', 'channel', 'channels', 'playlist', 'create', 'generate', 'make', 'loop', 'with', 'from', 'show', 'shows', 'please', 'everything', '24'])
+  const words = [...new Set((query.toLowerCase().match(/[a-z0-9]{2,}/g) ?? []).filter((word) => !ignored.has(word)))]
+  const matched = words.length ? media.filter((item) => {
+    const text = [item.title, item.franchise, item.series, item.description, ...(item.genres ?? []), ...item.tags, ...item.actors].filter(Boolean).join(' ').toLowerCase()
+    return words.every((word) => text.includes(word))
+  }) : []
+  const groups = new Map<string, string[]>()
+  for (const item of matched) {
+    const name = (item.franchise || item.series || '').trim()
+    if (name) groups.set(name, [...(groups.get(name) ?? []), item.id])
+  }
+  return { name: query.trim().slice(0, 100), ids: matched.map((item) => item.id), action: /\bchannel\b/i.test(query) ? 'channel' : /\bplaylist\b/i.test(query) ? 'playlist' : 'search', suggestions: [...groups].slice(0, 8).map(([name, ids]) => ({ name, ids })), examined: media.length, total: media.length }
+}
