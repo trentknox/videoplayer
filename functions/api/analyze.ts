@@ -179,6 +179,29 @@ function publicCandidate(html: string, base: URL): StructuredVideo {
   }
 }
 
+// This site's normal public play action uses a page-provided identifier to request player URLs.
+async function discoverSitePlayer(html: string, base: URL): Promise<string | undefined> {
+  if (base.hostname.toLowerCase() !== '1movies.stream') return undefined
+  const tag = html.match(/<[^>]*\bid=["']series-player["'][^>]*>/i)?.[0]
+  const token = tag?.match(/\bdata-token=["']([^"']{1,4096})["']/i)?.[1]
+  if (!token) return undefined
+  try {
+    const body = new URLSearchParams({ players_show: decodeEntities(token) })
+    const response = await fetch(new URL('/ajax/ajax.php', base), { method: 'POST', body, redirect: 'manual', signal: AbortSignal.timeout(8000) })
+    if (!response.ok) return undefined
+    const raw = (await readLimited(response)).slice(0, 65536)
+    const parsed: unknown = JSON.parse(raw)
+    const players = Array.isArray(parsed) ? parsed : [parsed]
+    for (const player of players) {
+      if (!player || typeof player !== 'object') continue
+      const link = textField((player as Record<string, unknown>).link)
+      const url = toPublicUrl(link, base)
+      if (url) return url
+    }
+  } catch { /* Fall back to a saved page when the public player request fails. */ }
+  return undefined
+}
+
 function discoverListings(html: string, base: URL): Array<{ url: string; title: string; poster?: string; season?: number; episode?: number }> {
   const items: Array<{ url: string; title: string; poster?: string; season?: number; episode?: number }> = []
   const seen = new Set<string>()
@@ -294,7 +317,7 @@ export const onRequestPost = async ({ request }: AnalyzeContext): Promise<Respon
 
   const html = await readLimited(response)
   const candidate = publicCandidate(html, finalUrl)
-  const embedUrl = candidate.url ?? candidate.iframe
+  const embedUrl = candidate.url ?? candidate.iframe ?? await discoverSitePlayer(html, finalUrl)
   const title = candidate.title ?? titleFromDocument(html) ?? finalUrl.hostname
   const poster = candidate.poster ?? toPublicUrl(metadata(html, 'og:image') ?? metadata(html, 'twitter:image'), finalUrl)
   const description = candidate.description ?? metadata(html, 'og:description') ?? metadata(html, 'description')

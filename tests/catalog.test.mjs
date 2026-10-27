@@ -60,6 +60,23 @@ test('episode links without posters retain season and episode numbers', async ()
   } finally { globalThis.fetch = originalFetch }
 })
 
+test('public play action yields an embed without accepting private player addresses', async () => {
+  const originalFetch = globalThis.fetch
+  const methods = []
+  globalThis.fetch = async (url, options) => {
+    methods.push(options.method || 'GET')
+    if (options.method === 'POST') return new Response(JSON.stringify([{ link: 'http://127.0.0.1/private' }, { link: 'https://player.example/embed/123' }]), { headers: { 'content-type': 'application/json' } })
+    return new Response('<div id="series-player" data-token="public-identifier"></div>', { headers: { 'content-type': 'text/html' } })
+  }
+  try {
+    const request = new Request('https://app.example/api/analyze', { method: 'POST', body: JSON.stringify({ url: 'https://1movies.stream/episode/example/s01-e01/' }) })
+    const result = await (await onRequestPost({ request })).json()
+    assert.equal(result.kind, 'video')
+    assert.equal(result.embedUrl, 'https://player.example/embed/123')
+    assert.deepEqual(methods, ['GET', 'POST'])
+  } finally { globalThis.fetch = originalFetch }
+})
+
 test('large listing pages remain discoverable across successive import batches', async () => {
   const originalFetch = globalThis.fetch
   const html = Array.from({ length: 225 }, (_, i) => `<a href="/films/${i}" title="Film ${i}"><img src="/poster.jpg"></a>`).join('')
