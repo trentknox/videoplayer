@@ -35,3 +35,16 @@ test('filters apply to actor and tag metadata, and empty matches produce no sche
   assert.equal(makeSchedule({ ...channel, filter: 'science' }, media)[0]?.mediaId, 'a')
   assert.deepEqual(makeSchedule({ ...channel, filter: 'no match' }, media), [])
 })
+
+test('playlist channels follow the playlist order and loop continuously across days', () => {
+  const linked = { ...channel, playlistId: 'p' }
+  const playlist = { id: 'p', mediaIds: ['b', 'a'] }
+  const at = new Date('2026-01-03T00:00:00Z')
+  const slots = makeSchedule(linked, media, at, [playlist])
+  assert.equal(nowPlaying(slots, at)?.mediaId, 'b')
+  assert.deepEqual(slots.slice(0, 3).map((slot) => slot.mediaId), ['b', 'a', 'b'])
+  const reordered = makeSchedule(linked, media, at, [{ ...playlist, mediaIds: ['a', 'b'] }])
+  assert.equal(nowPlaying(reordered, at)?.mediaId, 'a')
+  assert.deepEqual(makeSchedule(linked, media, at, []), [])
+  assert.deepEqual(makeSchedule({ ...channel, mediaIds: ['b', 'a'] }, media, at).slice(0, 2).map((slot) => slot.mediaId), ['b', 'a'])
+})

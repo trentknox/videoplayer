@@ -1,4 +1,4 @@
-import type { Channel, MediaItem, ScheduleSlot } from './types'
+import type { Channel, MediaItem, Playlist, ScheduleSlot } from './types'
 
 const minimumDuration = 60
 
@@ -12,12 +12,29 @@ function itemMatches(item: MediaItem, filter: string): boolean {
   return haystack.includes(needle)
 }
 
-export function makeSchedule(channel: Channel, media: MediaItem[], at = new Date()): ScheduleSlot[] {
-  const candidates = media.filter((item) => itemMatches(item, channel.filter))
+export function makeSchedule(channel: Channel, media: MediaItem[], at = new Date(), playlists: Playlist[] = []): ScheduleSlot[] {
+  const orderedIds = channel.playlistId ? playlists.find((playlist) => playlist.id === channel.playlistId)?.mediaIds ?? [] : channel.mediaIds
+  const candidates = orderedIds ? orderedIds.map((id) => media.find((item) => item.id === id)).filter((item): item is MediaItem => Boolean(item)) : media.filter((item) => itemMatches(item, channel.filter))
   if (!candidates.length) return []
   const anchor = new Date(channel.anchor).getTime()
   const cycle = Math.max(1, channel.durationHours || 24) * 60 * 60 * 1000
   if (!Number.isFinite(anchor) || !Number.isFinite(at.getTime())) return []
+  if (orderedIds) {
+    const duration = (item: MediaItem) => Math.max(Number.isFinite(item.durationSeconds) ? item.durationSeconds : minimumDuration, minimumDuration) * 1000
+    const period = candidates.reduce((sum, item) => sum + duration(item), 0)
+    let cursor = anchor + Math.max(0, Math.floor((at.getTime() - anchor) / period)) * period
+    const end = Math.max(at.getTime(), anchor) + cycle
+    const slots: ScheduleSlot[] = []
+    let index = 0
+    while (cursor < end) {
+      const item = candidates[index % candidates.length]
+      const next = cursor + duration(item)
+      slots.push({ id: `${channel.id}-${cursor}-${item.id}`, channelId: channel.id, mediaId: item.id, startsAt: new Date(cursor).toISOString(), endsAt: new Date(next).toISOString() })
+      cursor = next
+      index += 1
+    }
+    return slots
+  }
   const cycleIndex = Math.max(0, Math.floor((at.getTime() - anchor) / cycle))
   const start = anchor + cycleIndex * cycle
   const end = start + cycle

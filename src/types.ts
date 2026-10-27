@@ -46,6 +46,8 @@ export interface Channel {
   filter: string
   anchor: string
   durationHours: number
+  playlistId?: string
+  mediaIds?: string[]
 }
 
 export interface ScheduleSlot {

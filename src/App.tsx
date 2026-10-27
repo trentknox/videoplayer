@@ -110,6 +110,7 @@ export default function App() {
   const [homeSearch, setHomeSearch] = useState('')
   const [filters, setFilters] = useState<LibraryFilters>(defaultFilters)
   const [playlistName, setPlaylistName] = useState('')
+  const [deletedPlaylist, setDeletedPlaylist] = useState<{ playlist: Playlist; index: number }>()
   const [channelName, setChannelName] = useState('')
   const [channelFilter, setChannelFilter] = useState('')
   const [sourceUrl, setSourceUrl] = useState('')
@@ -165,7 +166,7 @@ export default function App() {
 
   const allSchedules = useMemo(() => {
     if (!library) return new Map<string, ReturnType<typeof makeSchedule>>()
-    return new Map(library.channels.map((channel) => [channel.id, makeSchedule(channel, library.media, clock)]))
+    return new Map(library.channels.map((channel) => [channel.id, makeSchedule(channel, library.media, clock, library.playlists)]))
   }, [library, clock])
 
   useEffect(() => {
@@ -175,7 +176,7 @@ export default function App() {
     let timer: number | undefined
     const update = () => {
       const now = new Date()
-      const slot = nowPlaying(makeSchedule(channel, library.media, now), now)
+      const slot = nowPlaying(makeSchedule(channel, library.media, now, library.playlists), now)
       if (!slot) return
       setActiveId(slot.mediaId)
       setChannelSlotId(slot.id)
@@ -372,8 +373,8 @@ export default function App() {
   function addToWatchLater(id: string): void {
     updateLibrary((current) => ({
       ...current,
-      playlists: current.playlists.map((playlist) => playlist.id === 'watch-later' && !playlist.mediaIds.includes(id)
-        ? { ...playlist, mediaIds: [...playlist.mediaIds, id] } : playlist),
+      playlists: current.playlists.some((playlist) => playlist.id === 'watch-later') ? current.playlists.map((playlist) => playlist.id === 'watch-later' && !playlist.mediaIds.includes(id)
+        ? { ...playlist, mediaIds: [...playlist.mediaIds, id] } : playlist) : [{ id: 'watch-later', name: 'Watch later', mediaIds: [id], createdAt: new Date().toISOString() }, ...current.playlists],
     }))
     setNotice('Added to Watch later.')
   }
@@ -406,6 +407,39 @@ export default function App() {
     }))
   }
 
+  function deletePlaylist(playlist: Playlist): void {
+    if (!library) return
+    setDeletedPlaylist({ playlist, index: library.playlists.findIndex((entry) => entry.id === playlist.id) })
+    updateLibrary((current) => ({ ...current,
+      playlists: current.playlists.filter((entry) => entry.id !== playlist.id),
+      channels: current.channels.map((channel) => channel.playlistId === playlist.id ? { ...channel, playlistId: undefined, mediaIds: [...playlist.mediaIds] } : channel),
+    }))
+    if (activePlaylistId === playlist.id) setActivePlaylistId(undefined)
+    setNotice(`Deleted ${playlist.name}. Its videos and channels remain.`)
+  }
+
+  function undoPlaylistDelete(): void {
+    if (!deletedPlaylist) return
+    const { playlist, index } = deletedPlaylist
+    updateLibrary((current) => {
+      if (current.playlists.some((entry) => entry.id === playlist.id)) return current
+      const playlists = [...current.playlists]
+      playlists.splice(Math.max(0, index), 0, playlist)
+      return { ...current, playlists }
+    })
+    setDeletedPlaylist(undefined)
+    setNotice(`Restored ${playlist.name}. Channels keep their saved order.`)
+  }
+
+  function createChannelFromPlaylist(playlist: Playlist): void {
+    if (!library || !playlist.mediaIds.some((id) => library.media.some((item) => item.id === id))) return
+    const channel: Channel = { id: makeId('channel'), name: playlist.name, description: `Loops the ${playlist.name} playlist in order.`, filter: '', accent: accents[library.channels.length % accents.length], anchor: new Date().toISOString(), durationHours: 24, playlistId: playlist.id }
+    updateLibrary((current) => ({ ...current, channels: [channel, ...current.channels] }))
+    setClock(new Date())
+    setNotice(`${playlist.name} is now a looping channel. Changes to the playlist update its schedule.`)
+    setView('channels')
+  }
+
   function createChannel(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
     const name = channelName.trim()
@@ -415,6 +449,7 @@ export default function App() {
       accent: accents[(library?.channels.length ?? 0) % accents.length], anchor: new Date().toISOString(), durationHours: 24,
     }
     updateLibrary((current) => ({ ...current, channels: [channel, ...current.channels] }))
+    setClock(new Date())
     setChannelName('')
     setChannelFilter('')
     setNotice(`${name} is now scheduled as a 24-hour virtual channel.`)
@@ -550,8 +585,9 @@ export default function App() {
       {view === 'playlists' && <section className="content-section">
         <div className="section-heading"><div><span className="section-eyebrow">CURATED QUEUES</span><h1>Playlists</h1></div></div>
         <form className="inline-form" onSubmit={createPlaylist}><input value={playlistName} onChange={(event) => setPlaylistName(event.target.value)} placeholder="New playlist name" /><button className="primary-button">Create playlist</button></form>
+        {deletedPlaylist && <button className="secondary-button" onClick={undoPlaylistDelete}>Undo delete of {deletedPlaylist.playlist.name}</button>}
         <div className="playlist-grid">
-          {library.playlists.map((playlist) => <PlaylistCard key={playlist.id} playlist={playlist} media={library.media} onChange={(id, add) => updatePlaylist(playlist.id, id, add)} onMove={(id, direction) => moveInPlaylist(playlist.id, id, direction)} onPlay={(id) => { setActiveChannelId(undefined); setActivePlaylistId(playlist.id); setActiveId(id); setView('home') }} />)}
+          {library.playlists.map((playlist) => <PlaylistCard key={playlist.id} playlist={playlist} media={library.media} onDelete={() => deletePlaylist(playlist)} onCreateChannel={() => createChannelFromPlaylist(playlist)} onRename={(name) => updateLibrary((current) => ({ ...current, playlists: current.playlists.map((entry) => entry.id === playlist.id ? { ...entry, name } : entry) }))} onChange={(id, add) => updatePlaylist(playlist.id, id, add)} onMove={(id, direction) => moveInPlaylist(playlist.id, id, direction)} onPlay={(id) => { setActiveChannelId(undefined); setActivePlaylistId(playlist.id); setActiveId(id); setView('home') }} />)}
         </div>
       </section>}
 
@@ -569,7 +605,7 @@ export default function App() {
           })}
         </section>}
         <div className="channel-grid">
-          {library.channels.map((channel) => <ChannelCard key={channel.id} channel={channel} media={library.media} clock={clock} onPlay={() => playChannel(channel)} />)}
+          {library.channels.map((channel) => <ChannelCard key={channel.id} channel={channel} media={library.media} playlists={library.playlists} clock={clock} onPlay={() => playChannel(channel)} />)}
           {!library.channels.length && <div className="empty-state">Create a channel such as “Saturday Sci-Fi,” “Action by Keanu,” or “Live Creator Loop.”</div>}
         </div>
       </section>}
@@ -629,15 +665,18 @@ function MediaGrid({ media, activeId, onPlay, onRemove }: MediaGridProps) {
   </article>)}</div>
 }
 
-function PlaylistCard({ playlist, media, onPlay, onChange, onMove }: { playlist: Playlist; media: MediaItem[]; onPlay: (id: string) => void; onChange: (id: string, add: boolean) => void; onMove: (id: string, direction: -1 | 1) => void }) {
+function PlaylistCard({ playlist, media, onPlay, onChange, onMove, onDelete, onCreateChannel, onRename }: { playlist: Playlist; media: MediaItem[]; onPlay: (id: string) => void; onChange: (id: string, add: boolean) => void; onMove: (id: string, direction: -1 | 1) => void; onDelete: () => void; onCreateChannel: () => void; onRename: (name: string) => void }) {
+  const [name, setName] = useState(playlist.name)
   const entries = playlist.mediaIds.map((id) => media.find((item) => item.id === id)).filter((item): item is MediaItem => Boolean(item))
   return <article className="playlist-card"><div className="playlist-cover"><span>≋</span></div><div><span className="section-eyebrow">PLAYLIST</span><h2>{playlist.name}</h2><p>{entries.length} saved title{entries.length === 1 ? '' : 's'}</p>{entries[0] && <button className="text-button" onClick={() => onPlay(entries[0].id)}>Play first →</button>}
     {entries.length > 0 && <ol>{entries.map((item, index) => <li key={item.id}>{item.title} <button type="button" className="text-button" disabled={index === 0} aria-label={`Move ${item.title} earlier`} onClick={() => onMove(item.id, -1)}>↑</button> <button type="button" className="text-button" disabled={index === entries.length - 1} aria-label={`Move ${item.title} later`} onClick={() => onMove(item.id, 1)}>↓</button></li>)}</ol>}
+    <div><button className="secondary-button" disabled={!entries.length} onClick={onCreateChannel}>Create channel</button> <button className="secondary-button" aria-label={`Delete ${playlist.name}`} onClick={onDelete}>Delete playlist</button></div>
+    <details><summary>Rename playlist</summary><form className="inline-form" onSubmit={(event) => { event.preventDefault(); if (name.trim()) onRename(name.trim()) }}><input aria-label={`Rename ${playlist.name}`} value={name} onChange={(event) => setName(event.target.value)} /><button className="secondary-button">Save name</button></form></details>
     <details><summary>Edit titles</summary>{media.map((item) => <label className="checkbox-row" key={item.id}><input type="checkbox" checked={playlist.mediaIds.includes(item.id)} onChange={(event) => onChange(item.id, event.target.checked)} /> {item.title}</label>)}</details></div></article>
 }
 
-function ChannelCard({ channel, media, clock, onPlay }: { channel: Channel; media: MediaItem[]; clock: Date; onPlay: () => void }) {
-  const schedule = makeSchedule(channel, media, clock)
+function ChannelCard({ channel, media, playlists, clock, onPlay }: { channel: Channel; media: MediaItem[]; playlists: Playlist[]; clock: Date; onPlay: () => void }) {
+  const schedule = makeSchedule(channel, media, clock, playlists)
   const live = nowPlaying(schedule, clock)
   const liveItem = live ? media.find((item) => item.id === live.mediaId) : undefined
   return <article className="channel-card" style={{ '--accent': channel.accent } as CSSProperties}>

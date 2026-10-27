@@ -5,10 +5,12 @@ const browser = await chromium.launch({ executablePath: 'C:/Program Files (x86)/
 const context = await browser.newContext()
 const page = await context.newPage()
 let newVersion = false
+let reloadSeen = false
 try {
-  await page.route('https://vivid-media-player.pages.dev/', (route) => newVersion
-    ? route.fulfill({ contentType: 'text/html', body: '<script type="module" src="/assets/index-FutureVersion.js"></script>' })
-    : route.continue())
+  await page.route('https://vivid-media-player.pages.dev/', (route) => {
+    if (newVersion && route.request().isNavigationRequest()) { reloadSeen = true; return route.abort() }
+    return newVersion ? route.fulfill({ contentType: 'text/html', body: '<script type="module" src="/assets/index-FutureVersion.js"></script>' }) : route.continue()
+  })
   await page.goto('https://vivid-media-player.pages.dev/', { waitUntil: 'domcontentloaded' })
   const search = page.getByLabel('Search your library')
   await search.fill('unsaved search')
@@ -17,5 +19,11 @@ try {
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   await page.getByRole('status').getByText(/A Vivid update is ready/).waitFor({ timeout: 10000 })
   assert.equal(await search.inputValue(), 'unsaved search')
-  console.log('Update detected without interrupting an active draft')
+  await search.fill('')
+  await search.blur()
+  await page.locator('video').evaluate((video) => video.pause())
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await page.waitForTimeout(1200)
+  assert.equal(reloadSeen, true, 'The app should reload automatically when idle')
+  console.log('Update waits for an active draft, then reloads when idle')
 } finally { await context.close(); await browser.close() }
