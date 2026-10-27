@@ -1,0 +1,19 @@
+[Unit]
+Description=Vivid private account and agent gateway
+After=network-online.target vivid-brain-proxy.service
+Requires=vivid-brain-proxy.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/vivid-ai-next
+Environment=VIVID_PORT=3021
+Environment=VIVID_BIND=127.0.0.1
+Environment=VIVID_DB_FILE=%h/vivid-ai-next/accounts.sqlite3
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -u %h/vivid-ai-next/vivid_ai_gateway.py
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

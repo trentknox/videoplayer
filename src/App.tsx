@@ -12,6 +12,10 @@ import { adjacentChannel } from './channelNavigation'
 import { startUpdateMonitor } from './updateMonitor'
 import { posterSources } from './posters'
 import { readPlayback, saveSelection, saveProgress } from './playbackSession'
+import { listBotTokens, createBotToken, revokeBotToken } from './botTokens'
+import type { BotScope, BotTokenInfo } from './botTokens'
+import { applyShared, getRemoteLibrary, mergeShared, putRemoteLibrary, sharedLibrary } from './cloudSync'
+import type { SharedLibrary } from './cloudSync'
 import { aiLogin, aiLogout, searchWithAi, searchByKeywords } from './aiSearch'
 import { discoverForSearch } from './searchSources'
 import type { AiSession, AiSearchResult } from './aiSearch'
@@ -120,9 +124,15 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [homeSearch, setHomeSearch] = useState('')
   const [aiSession, setAiSession] = useState<AiSession>()
-  const [gatewayAddress, setGatewayAddress] = useState('')
+  const [syncStatus, setSyncStatus] = useState('Not connected')
+  const [gatewayAddress, setGatewayAddress] = useState('http://127.0.0.1:3021')
   const [gatewayUser, setGatewayUser] = useState('')
   const [gatewayPassword, setGatewayPassword] = useState('')
+  const [botName, setBotName] = useState('')
+  const [botScopes, setBotScopes] = useState<BotScope[]>(['library:read'])
+  const [botTokens, setBotTokens] = useState<BotTokenInfo[]>([])
+  const [newBotToken, setNewBotToken] = useState('')
+  const [botError, setBotError] = useState('')
   const [aiBusy, setAiBusy] = useState(false)
   const [aiResult, setAiResult] = useState<AiSearchResult>()
   const [aiDialogOpen, setAiDialogOpen] = useState(false)
@@ -139,8 +149,22 @@ export default function App() {
   const stopCatalogImport = useRef(false)
   const sourceSyncLock = useRef(false)
   const importingRef = useRef(false)
+  const libraryRef = useRef(library)
+  libraryRef.current = library
+  const syncRef = useRef<{ session: AiSession; base: SharedLibrary | null; busy: boolean; halted: boolean } | undefined>(undefined)
   const lastPosterRepair = useRef(0)
   importingRef.current = importing
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.sessionStorage.getItem('vivid-ai-session') || 'null') as AiSession | null
+      if (saved && typeof saved.endpoint === 'string' && typeof saved.token === 'string' && saved.token) {
+        setAiSession(saved)
+        setGatewayAddress(saved.endpoint)
+        void refreshBotTokens(saved)
+      }
+    } catch { /* A new sign-in is required if the session cannot be restored. */ }
+  }, [])
 
   useEffect(() => startUpdateMonitor(() => setUpdateAvailable(true), () => importingRef.current), [])
 
@@ -164,6 +188,21 @@ export default function App() {
     saveSelection(window.sessionStorage, { mediaId: activeId, playlistId: activePlaylistId, channelId: activeChannelId })
     setResumeTarget((current) => current && current.id !== activeId ? undefined : current)
   }, [library, activeId, activePlaylistId, activeChannelId, playerEngaged])
+
+  useEffect(() => {
+    if (!aiSession || !library) { if (!aiSession) { syncRef.current = undefined; setSyncStatus('Not connected') }; return }
+    if (!syncRef.current || syncRef.current.session.token !== aiSession.token || syncRef.current.session.endpoint !== aiSession.endpoint) {
+      syncRef.current = { session: aiSession, base: null, busy: false, halted: false }
+    }
+    const timer = window.setTimeout(() => { void synchronizeLibrary() }, 800)
+    return () => window.clearTimeout(timer)
+  }, [aiSession, library])
+
+  useEffect(() => {
+    if (!aiSession) return
+    const timer = window.setInterval(() => { void synchronizeLibrary() }, 30000)
+    return () => window.clearInterval(timer)
+  }, [aiSession])
 
   useEffect(() => {
     if (library) void saveLibrary(library).catch(() => setNotice('Could not save your library on this device. Export a backup from Settings.'))
@@ -262,6 +301,39 @@ export default function App() {
 
   function updateLibrary(updater: (current: LibraryState) => LibraryState): void {
     setLibrary((current) => current ? updater(current) : current)
+  }
+
+  async function synchronizeLibrary(): Promise<void> {
+    const sync = syncRef.current
+    const local = libraryRef.current
+    if (!sync || !local || sync.busy || sync.halted) return
+    sync.busy = true
+    setSyncStatus('Syncing…')
+    const snapshot = sharedLibrary(local)
+    try {
+      const remote = await getRemoteLibrary(sync.session)
+      if (syncRef.current !== sync) return
+      const merged = mergeShared(sync.base, snapshot, remote.state)
+      if (!remote.state || JSON.stringify(merged) !== JSON.stringify(remote.state)) await putRemoteLibrary(sync.session, remote.revision, merged)
+      if (syncRef.current !== sync) return
+      sync.base = structuredClone(merged)
+      setLibrary((current) => {
+        if (!current || syncRef.current !== sync) return current
+        try {
+          const reconciled = mergeShared(snapshot, sharedLibrary(current), merged)
+          return JSON.stringify(sharedLibrary(current)) === JSON.stringify(reconciled) ? current : applyShared(current, reconciled)
+        } catch (error) {
+          sync.halted = true
+          queueMicrotask(() => setSyncStatus(error instanceof Error ? error.message : 'Sync conflict. Neither copy was overwritten.'))
+          return current
+        }
+      })
+      if (!sync.halted) setSyncStatus('Private library synced')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Private library sync failed.'
+      if (/Conflicting|Unlock server playlists|Invalid or duplicate IDs/.test(message)) sync.halted = true
+      setSyncStatus(message)
+    } finally { sync.busy = false }
   }
 
   function updateDraft<K extends keyof ImportDraft>(key: K, value: ImportDraft[K]): void {
@@ -403,10 +475,29 @@ export default function App() {
     try {
       const session = await aiLogin(gatewayAddress, gatewayUser, gatewayPassword)
       setAiSession(session)
+      try { window.sessionStorage.setItem('vivid-ai-session', JSON.stringify(session)) } catch { /* Continue without refresh persistence. */ }
       setGatewayPassword('')
+      void refreshBotTokens(session)
       setNotice('AI gateway connected for this session.')
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Could not connect to the AI gateway.') }
     finally { setAiBusy(false) }
+  }
+
+  async function refreshBotTokens(session: AiSession): Promise<void> {
+    try { setBotTokens(await listBotTokens(session)); setBotError('') }
+    catch (error) { setBotError(error instanceof Error ? error.message : 'Could not load bot tokens.') }
+  }
+
+  async function generateBotToken(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault()
+    if (!aiSession || !botName.trim() || !botScopes.length) return
+    setBotError('')
+    try {
+      const created = await createBotToken(aiSession, botName.trim(), botScopes, 30)
+      setNewBotToken(created.token)
+      setBotName('')
+      await refreshBotTokens(aiSession)
+    } catch (error) { setBotError(error instanceof Error ? error.message : 'Could not create a bot token.') }
   }
 
   async function askAi(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -850,7 +941,16 @@ export default function App() {
       {view === 'settings' && <section className="content-section settings-view">
         <span className="section-eyebrow">DATA & PROVIDERS</span><h1>Your library stays yours.</h1>
         <section className="content-section"><h2>Private AI gateway</h2><p>Connect your self-hosted Vivid gateway over HTTPS. Your password and session stay in memory on this device; reconnect after closing Vivid. AI search sends your request and selected library metadata to that gateway.</p>
-          {aiSession ? <><p>Connected for this session.</p><button className="secondary-button" onClick={() => { const session = aiSession; setAiSession(undefined); setAiResult(undefined); void aiLogout(session).then(() => setNotice('AI gateway disconnected.')).catch(() => setNotice('Disconnected locally; the gateway session could not be revoked.')) }}>Disconnect AI</button></> : <form className="inline-form" onSubmit={connectAi}><input aria-label="AI gateway URL" placeholder="https://your-server.example" value={gatewayAddress} onChange={(event) => setGatewayAddress(event.target.value)} required /><input aria-label="AI account username" placeholder="Username" autoComplete="username" value={gatewayUser} onChange={(event) => setGatewayUser(event.target.value)} required /><input aria-label="AI account password" type="password" placeholder="Password" autoComplete="current-password" value={gatewayPassword} onChange={(event) => setGatewayPassword(event.target.value)} required /><button className="primary-button" disabled={aiBusy}>Connect AI</button></form>}
+          {aiSession ? <><p>Connected for this session.</p><button className="secondary-button" onClick={() => { const session = aiSession; setAiSession(undefined); try { window.sessionStorage.removeItem('vivid-ai-session') } catch { /* Already disconnected locally. */ }; setAiResult(undefined); setBotTokens([]); setNewBotToken(''); void aiLogout(session).then(() => setNotice('AI gateway disconnected.')).catch(() => setNotice('Disconnected locally; the gateway session could not be revoked.')) }}>Disconnect AI</button></> : <form className="inline-form" onSubmit={connectAi}><input aria-label="AI gateway URL" placeholder="https://your-server.example" value={gatewayAddress} onChange={(event) => setGatewayAddress(event.target.value)} required /><input aria-label="AI account username" placeholder="Username" autoComplete="username" value={gatewayUser} onChange={(event) => setGatewayUser(event.target.value)} required /><input aria-label="AI account password" type="password" placeholder="Password" autoComplete="current-password" value={gatewayPassword} onChange={(event) => setGatewayPassword(event.target.value)} required /><button className="primary-button" disabled={aiBusy}>Connect AI</button></form>}
+        </section>
+        <section className="content-section"><h2>Private library sync</h2><p role="status">{syncStatus}</p><p>Your signed-in server library synchronizes while Vivid is open. If the same item changes on two devices, syncing stops instead of overwriting either copy. Export a local backup before resolving a conflict.</p>{aiSession && <button className="secondary-button" onClick={() => { if (syncRef.current) syncRef.current.halted = false; void synchronizeLibrary() }}>Retry sync</button>}</section>
+        <section className="content-section"><h2>Agent access</h2><p>Create a separate token for an agent and choose what it can manage. Tokens expire after 30 days and can be revoked here. Bot access requires a connected Vivid server.</p>
+          {!aiSession ? <p>Connect your private gateway above to manage agent tokens.</p> : <>
+            <form onSubmit={generateBotToken}><label>Token name<input value={botName} onChange={(event) => setBotName(event.target.value)} placeholder="e.g. Library agent" required maxLength={80} /></label><div className="bot-scopes">{([['library:read', 'Read library metadata'], ['sources:manage', 'Manage sources'], ['playlists:manage', 'Manage playlists'], ['channels:manage', 'Create channels'], ['inference', 'Use configured AI']] as Array<[BotScope, string]>).map(([scope, label]) => <label className="checkbox-row" key={scope}><input type="checkbox" checked={botScopes.includes(scope)} onChange={(event) => setBotScopes((current) => event.target.checked ? [...current, scope] : current.filter((entry) => entry !== scope))} /> {label}</label>)}</div><button className="primary-button" disabled={!botScopes.length}>Generate token</button></form>
+            {newBotToken && <div className="bot-token-reveal"><p>Copy this token now. Vivid will not show it again.</p><input aria-label="New bot token" value={newBotToken} readOnly onFocus={(event) => event.currentTarget.select()} /><button className="secondary-button" onClick={() => { void navigator.clipboard.writeText(newBotToken).then(() => setNotice('Bot token copied.')).catch(() => setBotError('Could not copy automatically; select the token and copy it.')) }}>Copy token</button> <button className="text-button" onClick={() => setNewBotToken('')}>Dismiss</button></div>}
+            {botError && <p role="alert">{botError}</p>}
+            {botTokens.map((token) => <div className="bot-token-row" key={token.id}><span><strong>{token.name}</strong> · {token.scopes.join(', ')} · {token.revoked ? 'Revoked' : `Expires ${new Date(token.expiresAt * 1000).toLocaleDateString()}`}</span>{!token.revoked && <button className="secondary-button" onClick={() => { void revokeBotToken(aiSession, token.id).then(() => refreshBotTokens(aiSession)).catch((error) => setBotError(error instanceof Error ? error.message : 'Could not revoke token.')) }}>Revoke</button>}</div>)}
+          </>}
         </section>
         <section className="content-section"><h2>Sources</h2><p>Saved sources refresh when Vivid is open, then about every six hours. New titles appear on Home. Catalog scans may take multiple batches; links are sent to Vivid’s analysis service.</p>
           <form className="inline-form" onSubmit={addSource}><input aria-label="Source URL to save" type="url" required value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://…" /><button className="primary-button">Add source</button></form>

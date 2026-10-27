@@ -184,3 +184,8 @@ input:focus { border-color: #9b90ff; box-shadow: 0 0 0 3px rgba(155,144,255,.14)
 .library-view > .import-card { margin-bottom: 30px; }
 
 .hero-grid:not(.mini-player-grid):not(.theater-mode) { grid-template-columns: minmax(0, 1000px); justify-content: center; }
+
+.bot-scopes { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 0; }
+.bot-token-reveal { margin: 15px 0; padding: 12px; border: 1px solid #7771b1; border-radius: 10px; }
+.bot-token-reveal input { width: min(100%, 560px); }
+.bot-token-row { display: flex; gap: 12px; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #39405c; }

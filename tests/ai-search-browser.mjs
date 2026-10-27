@@ -13,7 +13,7 @@ try {
     const path = new URL(route.request().url()).pathname
     const search = path === '/v1/infer' ? JSON.parse(route.request().postDataJSON().messages[1].content) : undefined
     const match = search?.library.find((item) => item.title === 'New source video')
-    const payload = path === '/v1/login' ? { token: 'test-session' } : path === '/v1/infer' ? { text: JSON.stringify({ name: 'Animation channel', ids: [match?.id, 'unknown'], action: 'channel', suggestions: [{ name: 'Animation favorites', ids: [match?.id] }] }) } : { ok: true }
+    const payload = path === '/v1/login' ? { token: 'test-session' } : path === '/v1/bot-tokens' ? { tokens: [] } : path === '/v1/infer' ? { text: JSON.stringify({ name: 'Animation channel', ids: [match?.id, 'unknown'], action: 'channel', suggestions: [{ name: 'Animation favorites', ids: [match?.id] }] }) } : { ok: true }
     await route.fulfill({ json: payload, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'POST, OPTIONS' } })
   })
   await page.goto('http://127.0.0.1:4181/')

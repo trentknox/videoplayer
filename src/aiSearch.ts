@@ -11,7 +11,9 @@ export function gatewayUrl(value: string): string {
 
 export async function aiLogin(endpoint: string, username: string, secret: string): Promise<AiSession> {
   const base = gatewayUrl(endpoint)
-  const response = await fetch(`${base}/v1/login`, { method: 'POST', redirect: 'error', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, secret }), signal: AbortSignal.timeout(15000) })
+  let response: Response
+  try { response = await fetch(`${base}/v1/login`, { method: 'POST', redirect: 'error', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, secret }), signal: AbortSignal.timeout(15000) }) }
+  catch { throw new Error(base.startsWith('http://127.0.0.1') || base.startsWith('http://localhost') ? 'Could not reach the private gateway. Check the SSH tunnel and allow local-network access for Vivid in Edge.' : 'Could not reach the private gateway. Check its address and connection.') }
   if (!response.ok) throw new Error('Could not sign in to the AI gateway. Check the address and account.')
   const result = await response.json() as { token?: unknown }
   if (typeof result.token !== 'string' || !result.token) throw new Error('The gateway returned an invalid session.')

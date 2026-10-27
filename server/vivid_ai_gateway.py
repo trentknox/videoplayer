@@ -15,7 +15,7 @@ from accounts import Accounts
 TOKEN = Path(os.environ.get('VIVID_TOKEN_FILE', str(Path.home() / '.hermes/brain-proxy-vivid.token'))).read_text().strip()
 UPSTREAM_TOKEN = Path(os.environ['VIVID_UPSTREAM_TOKEN_FILE']).read_text().strip() if os.environ.get('VIVID_UPSTREAM_TOKEN_FILE') else TOKEN
 ORIGINS = {origin.strip() for origin in os.environ.get('VIVID_ALLOWED_ORIGINS', 'https://vivid-media-player.pages.dev').split(',') if origin.strip()}
-MODELS = [m.strip() for m in os.environ.get('VIVID_MODELS', 'meituan/longcat-2.5-preview:free,poolside/laguna-s-2.1:free,upstage/solar-mini4:free').split(',') if m.strip()]
+MODELS = [m.strip() for m in os.environ.get('VIVID_MODELS', 'upstage/solar-mini4:free,poolside/laguna-s-2.1:free,meituan/longcat-2.5-preview:free').split(',') if m.strip()]
 UPSTREAM = os.environ.get('VIVID_HERMES_URL', 'http://127.0.0.1:3019').rstrip('/')
 ACCOUNTS = Accounts(os.environ.get('VIVID_DB_FILE', str(Path.home() / 'vivid-ai-gateway/accounts.sqlite3')))
 LIMIT = 10
@@ -50,9 +50,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Vary', 'Origin')
         self.end_headers()
 
-    def authorized(self):
+    def authorized(self, bot_scope=None):
         candidate = self.headers.get('Authorization', '').removeprefix('Bearer ').strip()
-        return candidate if candidate.isascii() and ACCOUNTS.session(candidate) else None
+        if not candidate.isascii(): return None
+        return candidate if ACCOUNTS.session(candidate) or (bot_scope and ACCOUNTS.bot_session(candidate, bot_scope)) else None
 
     def read_json(self, limit=32768):
         size = int(self.headers.get('Content-Length', '0'))
@@ -62,12 +63,14 @@ class Handler(BaseHTTPRequestHandler):
         return data
 
     def do_GET(self):
-        if self.path not in ('/v1/state', '/v1/profiles'): return self.send_json(404, {'error': 'not_found'})
-        token = self.authorized()
+        if self.path not in ('/v1/state', '/v1/profiles', '/v1/bot-tokens', '/v1/bot/sources'): return self.send_json(404, {'error': 'not_found'})
+        token = self.authorized('library:read' if self.path == '/v1/state' else 'sources:manage' if self.path == '/v1/bot/sources' else None)
         if not token: return self.send_json(403, {'error': 'unauthorized'})
         try:
             if self.path == '/v1/profiles': return self.send_json(200, {'profiles': ACCOUNTS.list_profiles(token)})
-            revision, state = ACCOUNTS.read_library(token)
+            if self.path == '/v1/bot-tokens': return self.send_json(200, {'tokens': ACCOUNTS.list_bot_tokens(token)})
+            if self.path == '/v1/bot/sources': return self.send_json(200, {'sources': ACCOUNTS.read_bot_sources(token)})
+            revision, state = ACCOUNTS.read_bot_library(token) if ACCOUNTS.bot_session(token, 'library:read') else ACCOUNTS.read_library(token)
             return self.send_json(200, {'revision': revision, 'state': state})
         except PermissionError: return self.send_json(403, {'error': 'forbidden'})
         except (OSError, ValueError, sqlite3.Error): return self.send_json(500, {'error': 'state_unavailable'})
@@ -104,12 +107,29 @@ class Handler(BaseHTTPRequestHandler):
                 session = ACCOUNTS.session(session_token)
                 return self.send_json(200, {'token': session_token, 'role': session[2]})
             except (ValueError, TypeError, sqlite3.Error): return self.send_json(400, {'error': 'invalid_request'})
-        if self.path not in ('/v1/infer', '/v1/profiles', '/v1/profiles/policy', '/v1/playlists/lock', '/v1/playlists/unlock', '/v1/logout'): return self.send_json(404, {'error': 'not_found'})
-        token = self.authorized()
+        if self.path == '/v1/bot/actions':
+            candidate = self.headers.get('Authorization', '').removeprefix('Bearer ').strip()
+            if not candidate.isascii() or not any(ACCOUNTS.bot_session(candidate, scope) for scope in ('sources:manage', 'playlists:manage', 'channels:manage')): return self.send_json(403, {'error': 'unauthorized'})
+            try:
+                data = self.read_json(64 * 1024)
+                return self.send_json(200, ACCOUNTS.bot_action(candidate, data.get('action'), data.get('data')))
+            except PermissionError: return self.send_json(403, {'error': 'forbidden'})
+            except (ValueError, TypeError, sqlite3.Error): return self.send_json(400, {'error': 'invalid_request'})
+        if self.path not in ('/v1/infer', '/v1/profiles', '/v1/profiles/policy', '/v1/playlists/lock', '/v1/playlists/unlock', '/v1/logout', '/v1/bot-tokens', '/v1/bot-tokens/revoke'): return self.send_json(404, {'error': 'not_found'})
+        token = self.authorized('inference' if self.path == '/v1/infer' else None)
         if not token: return self.send_json(403, {'error': 'unauthorized'})
         if self.path == '/v1/logout':
             ACCOUNTS.logout(token)
             return self.send_json(200, {'ok': True})
+        if self.path in ('/v1/bot-tokens', '/v1/bot-tokens/revoke'):
+            try:
+                data = self.read_json(4096)
+                if self.path.endswith('/revoke'):
+                    if not ACCOUNTS.revoke_bot_token(token, data.get('id')): return self.send_json(404, {'error': 'token_not_found'})
+                    return self.send_json(200, {'ok': True})
+                return self.send_json(201, ACCOUNTS.create_bot_token(token, data.get('name'), data.get('scopes'), data.get('days', 30)))
+            except PermissionError: return self.send_json(403, {'error': 'forbidden'})
+            except (ValueError, TypeError, sqlite3.Error): return self.send_json(400, {'error': 'invalid_request'})
         if self.path in ('/v1/playlists/lock', '/v1/playlists/unlock'):
             if self.path.endswith('/unlock'):
                 with lock:
@@ -145,7 +165,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(201, {'id': profile_id})
             except PermissionError: return self.send_json(403, {'error': 'forbidden'})
             except (ValueError, TypeError, sqlite3.Error): return self.send_json(400, {'error': 'invalid_profile'})
-        if ACCOUNTS.session(token)[2] == 'child': return self.send_json(403, {'error': 'child_ai_unavailable'})
+        session = ACCOUNTS.session(token)
+        if session and session[2] == 'child': return self.send_json(403, {'error': 'child_ai_unavailable'})
+        if not session and not ACCOUNTS.bot_session(token, 'inference'): return self.send_json(403, {'error': 'unauthorized'})
         with lock:
             now = time.monotonic()
             while recent and recent[0] < now - 60:

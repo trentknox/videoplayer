@@ -1,10 +1,13 @@
 """Vivid account and profile storage; HTTP authorization is handled separately."""
 import hashlib
 import hmac
+import ipaddress
 import json
+from urllib.parse import urlsplit, urlunsplit
 import secrets
 import sqlite3
 import time
+from datetime import datetime, timezone
 from contextlib import closing
 from pathlib import Path
 
@@ -26,6 +29,7 @@ class Accounts:
               CREATE TABLE IF NOT EXISTS libraries(account_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, state TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS playlist_locks(account_id TEXT NOT NULL, playlist_id TEXT NOT NULL, salt BLOB NOT NULL, secret BLOB NOT NULL, PRIMARY KEY(account_id,playlist_id));
               CREATE TABLE IF NOT EXISTS playlist_unlocks(token_hash TEXT NOT NULL, playlist_id TEXT NOT NULL, PRIMARY KEY(token_hash,playlist_id));
+              CREATE TABLE IF NOT EXISTS bot_tokens(id TEXT PRIMARY KEY, account_id TEXT NOT NULL, name TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, scopes TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER, FOREIGN KEY(account_id) REFERENCES accounts(id));
             ''')
         self.path.chmod(0o600)
 
@@ -106,6 +110,146 @@ class Accounts:
         with closing(self.connect()) as db, db:
             db.execute('DELETE FROM playlist_unlocks WHERE token_hash=?', (digest,))
             db.execute('DELETE FROM sessions WHERE token_hash=?', (digest,))
+
+    def create_bot_token(self, owner_token, name, scopes, days=30):
+        owner = self.session(owner_token)
+        if not owner or owner[2] != 'owner': raise PermissionError('owner required')
+        if not isinstance(name, str) or not name.strip() or len(name) > 80 or not isinstance(scopes, list) or not scopes or any(scope not in ('inference', 'library:read', 'sources:manage', 'playlists:manage', 'channels:manage') for scope in scopes) or type(days) is not int or not 1 <= days <= 365: raise ValueError('invalid bot token')
+        token = 'vivid_bot_' + secrets.token_urlsafe(32)
+        token_id = secrets.token_urlsafe(18)
+        now = int(time.time())
+        with closing(self.connect()) as db, db:
+            db.execute('INSERT INTO bot_tokens VALUES (?,?,?,?,?,?,?,NULL)', (token_id, owner[0], name.strip(), hashlib.sha256(token.encode()).hexdigest(), json.dumps(sorted(set(scopes))), now, now + days * 86400))
+        return {'id': token_id, 'token': token, 'expiresAt': now + days * 86400}
+
+    def bot_session(self, token, required_scope):
+        if not isinstance(token, str) or not token.startswith('vivid_bot_') or len(token) > 256: return None
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        with closing(self.connect()) as db:
+            row = db.execute('SELECT account_id,scopes FROM bot_tokens WHERE token_hash=? AND revoked_at IS NULL AND expires_at>?', (digest, int(time.time()))).fetchone()
+        if not row or required_scope not in json.loads(row[1]): return None
+        return row[0]
+
+    def list_bot_tokens(self, owner_token):
+        owner = self.session(owner_token)
+        if not owner or owner[2] != 'owner': raise PermissionError('owner required')
+        with closing(self.connect()) as db:
+            return [{'id': row[0], 'name': row[1], 'scopes': json.loads(row[2]), 'createdAt': row[3], 'expiresAt': row[4], 'revoked': row[5] is not None} for row in db.execute('SELECT id,name,scopes,created_at,expires_at,revoked_at FROM bot_tokens WHERE account_id=? ORDER BY created_at DESC', (owner[0],))]
+
+    def revoke_bot_token(self, owner_token, token_id):
+        owner = self.session(owner_token)
+        if not owner or owner[2] != 'owner': raise PermissionError('owner required')
+        if not isinstance(token_id, str) or len(token_id) > 100: raise ValueError('invalid token id')
+        with closing(self.connect()) as db, db:
+            return bool(db.execute('UPDATE bot_tokens SET revoked_at=? WHERE id=? AND account_id=? AND revoked_at IS NULL', (int(time.time()), token_id, owner[0])).rowcount)
+
+    def read_bot_library(self, token):
+        account_id = self.bot_session(token, 'library:read')
+        if not account_id: raise PermissionError('bot library scope required')
+        with closing(self.connect()) as db:
+            row = db.execute('SELECT revision,state FROM libraries WHERE account_id=?', (account_id,)).fetchone()
+            locks = {entry[0] for entry in db.execute('SELECT playlist_id FROM playlist_locks WHERE account_id=?', (account_id,))}
+        if not row: return 0, None
+        state = json.loads(row[1])
+        locked_media = {media_id for playlist in state.get('playlists', []) if playlist.get('id') in locks for media_id in playlist.get('mediaIds', [])}
+        # Bot access is intentionally narrower: no source credentials, history, channels, or locked media.
+        fields = ('id', 'title', 'provider', 'kind', 'description', 'contentType', 'contentRating', 'year', 'genres', 'actors', 'durationSeconds', 'franchise', 'series', 'season', 'episode', 'tags')
+        media = [{key: item[key] for key in fields if key in item} for item in state.get('media', []) if item.get('id') not in locked_media]
+        playlists = [{'id': playlist.get('id'), 'name': playlist.get('name'), 'mediaIds': [item for item in playlist.get('mediaIds', []) if item not in locked_media]} for playlist in state.get('playlists', []) if playlist.get('id') not in locks]
+        result = {'media': media, 'playlists': playlists, 'channels': []}
+        return row[0], result
+
+    def read_bot_sources(self, token):
+        account_id = self.bot_session(token, 'sources:manage')
+        if not account_id: raise PermissionError('bot source scope required')
+        with closing(self.connect()) as db:
+            row = db.execute('SELECT state FROM libraries WHERE account_id=?', (account_id,)).fetchone()
+        if not row: return []
+        sources = []
+        for source in json.loads(row[0]).get('sources', []):
+            try:
+                url = urlsplit(source.get('url', ''))
+                if url.scheme not in ('http', 'https') or not url.hostname: continue
+                safe_url = urlunsplit((url.scheme, url.netloc.rsplit('@', 1)[-1], url.path, '', ''))
+                sources.append({'id': source.get('id'), 'url': safe_url})
+            except ValueError: continue
+        return sources
+
+    def bot_action(self, token, action, data):
+        scope = {'source.add': 'sources:manage', 'source.remove': 'sources:manage', 'playlist.create': 'playlists:manage', 'playlist.replace': 'playlists:manage', 'playlist.delete': 'playlists:manage', 'channel.create': 'channels:manage'}.get(action)
+        account_id = self.bot_session(token, scope) if scope else None
+        if not account_id: raise PermissionError('bot action scope required')
+        if not isinstance(data, dict): raise ValueError('invalid action')
+        with closing(self.connect()) as db, db:
+            db.execute('BEGIN IMMEDIATE')
+            digest = hashlib.sha256(token.encode()).hexdigest()
+            live_token = db.execute('SELECT scopes FROM bot_tokens WHERE token_hash=? AND account_id=? AND revoked_at IS NULL AND expires_at>?', (digest, account_id, int(time.time()))).fetchone()
+            if not live_token or scope not in json.loads(live_token[0]): raise PermissionError('bot token revoked or expired')
+            row = db.execute('SELECT revision,state FROM libraries WHERE account_id=?', (account_id,)).fetchone()
+            revision, state = (row[0], json.loads(row[1])) if row else (0, {'media': [], 'playlists': [], 'channels': []})
+            locked = {entry[0] for entry in db.execute('SELECT playlist_id FROM playlist_locks WHERE account_id=?', (account_id,))}
+            locked_media = {media_id for playlist in state.get('playlists', []) if playlist.get('id') in locked for media_id in playlist.get('mediaIds', [])}
+            available = {item.get('id') for item in state.get('media', [])} - locked_media
+            result = {}
+            if action == 'source.add':
+                url = data.get('url')
+                if not isinstance(url, str) or len(url) > 2048: raise ValueError('invalid source')
+                try: parsed = urlsplit(url)
+                except ValueError: raise ValueError('invalid source')
+                if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password or parsed.fragment: raise ValueError('invalid source')
+                host = parsed.hostname.lower().rstrip('.')
+                if host == 'localhost' or host.endswith(('.localhost', '.local')): raise ValueError('private source not allowed for bot actions')
+                try: address = ipaddress.ip_address(host)
+                except ValueError:
+                    if host.isdecimal(): raise ValueError('invalid source host')
+                else:
+                    if not address.is_global: raise ValueError('private source not allowed for bot actions')
+                sources = state.setdefault('sources', [])
+                if any(source.get('url') == url for source in sources): raise ValueError('duplicate source')
+                source_id = 'source-' + secrets.token_urlsafe(18)
+                sources.append({'id': source_id, 'url': url})
+                result = {'id': source_id}
+            elif action == 'source.remove':
+                source_id = data.get('id')
+                if not isinstance(source_id, str): raise ValueError('invalid source')
+                sources = state.get('sources', [])
+                if not any(source.get('id') == source_id for source in sources): raise ValueError('source not found')
+                state['sources'] = [source for source in sources if source.get('id') != source_id]
+            elif action in ('playlist.create', 'playlist.replace'):
+                name, ids = data.get('name'), data.get('mediaIds')
+                if not isinstance(name, str) or not name.strip() or len(name) > 100 or not isinstance(ids, list) or len(ids) > 5000 or any(not isinstance(item, str) or item not in available for item in ids) or len(set(ids)) != len(ids): raise ValueError('invalid playlist')
+                if action == 'playlist.create':
+                    playlist_id = 'playlist-' + secrets.token_urlsafe(18)
+                    state['playlists'].insert(0, {'id': playlist_id, 'name': name.strip(), 'mediaIds': ids, 'createdAt': datetime.now(timezone.utc).isoformat()})
+                else:
+                    playlist_id = data.get('id')
+                    if not isinstance(playlist_id, str) or playlist_id in locked: raise PermissionError('playlist locked')
+                    playlist = next((entry for entry in state['playlists'] if entry.get('id') == playlist_id), None)
+                    if not playlist: raise ValueError('playlist not found')
+                    if any(item in locked_media for item in playlist.get('mediaIds', [])): raise PermissionError('playlist contains locked media')
+                    playlist['name'], playlist['mediaIds'] = name.strip(), ids
+                result = {'id': playlist_id}
+            elif action == 'playlist.delete':
+                playlist_id = data.get('id')
+                if not isinstance(playlist_id, str) or playlist_id in locked: raise PermissionError('playlist locked')
+                playlist = next((entry for entry in state['playlists'] if entry.get('id') == playlist_id), None)
+                if not playlist: raise ValueError('playlist not found')
+                if any(item in locked_media for item in playlist.get('mediaIds', [])): raise PermissionError('playlist contains locked media')
+                state['playlists'] = [entry for entry in state['playlists'] if entry.get('id') != playlist_id]
+                state['channels'] = [{**channel, 'playlistId': None, 'mediaIds': list(playlist.get('mediaIds', []))} if channel.get('playlistId') == playlist_id else channel for channel in state['channels']]
+            elif action == 'channel.create':
+                playlist_id = data.get('playlistId')
+                if not isinstance(playlist_id, str) or playlist_id in locked: raise PermissionError('playlist locked')
+                playlist = next((entry for entry in state['playlists'] if entry.get('id') == playlist_id), None)
+                if not playlist or not playlist.get('mediaIds'): raise ValueError('empty or missing playlist')
+                if any(item in locked_media for item in playlist.get('mediaIds', [])): raise PermissionError('playlist contains locked media')
+                channel_id = 'channel-' + secrets.token_urlsafe(18)
+                state['channels'].insert(0, {'id': channel_id, 'name': playlist['name'], 'description': 'Loops this playlist in order.', 'accent': '#8a7dff', 'filter': '', 'anchor': datetime.now(timezone.utc).isoformat(), 'durationHours': 24, 'playlistId': playlist_id})
+                result = {'id': channel_id}
+            serialized = json.dumps(state, separators=(',', ':'))
+            if len(serialized.encode('utf-8')) > 8 * 1024 * 1024: raise ValueError('state too large')
+            db.execute('INSERT OR REPLACE INTO libraries VALUES (?,?,?)', (account_id, revision + 1, serialized))
+            return {**result, 'revision': revision + 1}
 
     def lock_playlist(self, token, playlist_id, pin):
         owner = self.session(token)

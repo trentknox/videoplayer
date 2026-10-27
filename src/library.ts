@@ -21,7 +21,7 @@ const defaultState: LibraryState = {
       durationSeconds: 10,
       tags: ['sample', 'animation'],
       actors: [],
-      addedAt: new Date().toISOString(),
+      addedAt: '2020-01-01T00:00:00.000Z',
       importMode: 'single',
     },
   ],

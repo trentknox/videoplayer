@@ -56,6 +56,22 @@ class GatewayTest(unittest.TestCase):
             with urllib.request.urlopen(request, timeout=5) as response: return response.status, json.load(response)
         except urllib.error.HTTPError as error: return error.code, json.load(error)
 
+    def test_bot_token_scope_and_revocation(self):
+        status, login = self.request('POST', '/v1/login', {'username': 'owner', 'secret': 'long-password'})
+        self.assertEqual(status, 200)
+        owner = login['token']
+        status, created = self.request('POST', '/v1/bot-tokens', {'name': 'Library Agent', 'scopes': ['library:read', 'sources:manage']}, owner)
+        self.assertEqual(status, 201)
+        bot = created['token']
+        self.assertEqual(self.request('GET', '/v1/state', token=bot)[0], 200)
+        self.assertEqual(self.request('GET', '/v1/bot-tokens', token=bot)[0], 403)
+        self.assertEqual(self.request('POST', '/v1/infer', {'messages': [{'role': 'user', 'content': 'hello'}]}, bot)[0], 403)
+        self.assertEqual(self.request('POST', '/v1/bot/actions', {'action': 'source.add', 'data': {'url': 'https://catalog.example/'}}, bot)[0], 200)
+        self.assertEqual(self.request('POST', '/v1/bot/actions', {'action': 'playlist.create', 'data': {'name': 'Not allowed', 'mediaIds': []}}, bot)[0], 403)
+        self.assertIn('https://catalog.example/', [source['url'] for source in self.request('GET', '/v1/bot/sources', token=bot)[1]['sources']])
+        self.assertEqual(self.request('POST', '/v1/bot-tokens/revoke', {'id': created['id']}, owner)[0], 200)
+        self.assertEqual(self.request('GET', '/v1/state', token=bot)[0], 403)
+
     def test_auth_fallback_and_conflict(self):
         self.assertEqual(self.request('GET', '/v1/state', token='bad')[0], 403)
         status, login = self.request('POST', '/v1/login', {'username': 'owner', 'secret': 'long-password'})

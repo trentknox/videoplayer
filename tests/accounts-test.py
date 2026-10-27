@@ -46,6 +46,36 @@ class AccountsTest(unittest.TestCase):
         self.accounts.logout(child)
         with self.assertRaises(PermissionError): self.accounts.read_library(child)
 
+    def test_bot_tokens_are_scoped_revocable_and_cannot_access_locked_content(self):
+        self.accounts.create_account('family', 'strong-password')
+        self.accounts.create_account('other', 'other-password')
+        owner = self.accounts.login_owner('family', 'strong-password')
+        other = self.accounts.login_owner('other', 'other-password')
+        state = {'media': [{'id': 'public', 'title': 'Public', 'sourceUrl': 'https://example.test/?token=secret'}, {'id': 'private', 'title': 'Private'}], 'playlists': [{'id': 'locked', 'name': 'Private list', 'mediaIds': ['private']}, {'id': 'shared', 'name': 'Shared', 'mediaIds': ['public', 'private']}], 'channels': [], 'sources': [{'id': 's', 'url': 'https://example.test/?key=secret'}]}
+        self.accounts.write_library(owner, 0, state)
+        self.accounts.lock_playlist(owner, 'locked', '4321')
+        created = self.accounts.create_bot_token(owner, 'Agent', ['library:read', 'playlists:manage', 'channels:manage', 'sources:manage'])
+        bot = created['token']
+        self.assertNotIn(bot.encode(), self.accounts.path.read_bytes())
+        self.assertNotIn('token', self.accounts.list_bot_tokens(owner)[0])
+        self.assertEqual(self.accounts.list_bot_tokens(other), [])
+        _, visible = self.accounts.read_bot_library(bot)
+        self.assertEqual([x['id'] for x in visible['media']], ['public'])
+        self.assertNotIn('sourceUrl', visible['media'][0])
+        self.assertEqual(visible['playlists'][0]['mediaIds'], ['public'])
+        self.assertNotIn('sources', visible)
+        self.assertEqual(self.accounts.read_bot_sources(bot)[0]['url'], 'https://example.test/')
+        with self.assertRaises(ValueError): self.accounts.bot_action(bot, 'source.add', {'url': 'http://127.0.0.1/private'})
+        with self.assertRaises(PermissionError): self.accounts.bot_action(bot, 'playlist.delete', {'id': 'locked'})
+        with self.assertRaises(ValueError): self.accounts.bot_action(bot, 'playlist.create', {'name': 'Leak', 'mediaIds': ['private']})
+        playlist = self.accounts.bot_action(bot, 'playlist.create', {'name': 'Agent playlist', 'mediaIds': ['public']})
+        channel = self.accounts.bot_action(bot, 'channel.create', {'playlistId': playlist['id']})
+        self.assertTrue(channel['id'].startswith('channel-'))
+        self.assertFalse(self.accounts.revoke_bot_token(other, created['id']))
+        self.assertTrue(self.accounts.revoke_bot_token(owner, created['id']))
+        self.assertIsNone(self.accounts.bot_session(bot, 'library:read'))
+        with self.assertRaises(PermissionError): self.accounts.bot_action(bot, 'source.add', {'url': 'https://example.test/'})
+
     def test_simultaneous_updates_do_not_silently_overwrite(self):
         self.accounts.create_account('family', 'strong-password')
         token = self.accounts.login_owner('family', 'strong-password')
