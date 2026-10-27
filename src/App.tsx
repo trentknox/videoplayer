@@ -4,6 +4,7 @@ import PlayerSurface from './PlayerSurface'
 import { exportLibrary, importLibrary, loadLibrary, saveLibrary } from './library'
 import { analyzePublicPage, analyzeUrl, enrichYouTubeItem } from './providers'
 import { scanCatalog } from './catalogScan'
+import { advanceCatalogJob } from './catalogJob'
 import { movePlaylistItem } from './playlist'
 import { formatClock, makeSchedule, nowPlaying } from './scheduler'
 import type { AnalysisResult, Channel, ImportDraft, LibraryState, MediaItem, Playlist } from './types'
@@ -200,7 +201,8 @@ export default function App() {
     setNotice('Looking for titles on this page…')
     try {
       const source = new URL(draft.url).href
-      let start: string | undefined = library.catalogCursors?.[source] ?? source
+      let job = library.catalogJobs?.[source] ?? { current: library.catalogCursors?.[source] ?? source, pending: [], seen: [source] }
+      let start = job.current
       const known = new Set(library.media.map((item) => item.sourceUrl))
       const emptyCursors = new Set<string>()
       let added = 0
@@ -228,16 +230,20 @@ export default function App() {
           entries.push(...analyzed)
         }
         for (const item of entries) known.add(item.sourceUrl)
+        job = advanceCatalogJob(source, job, cursor, sections)
+        const savedJob = job
         updateLibrary((current) => {
           const existing = new Set(current.media.map((item) => item.sourceUrl))
           const cursors = { ...current.catalogCursors }
-          if (cursor) cursors[source] = cursor
-          else delete cursors[source]
-          return { ...current, catalogCursors: cursors, media: [...entries.filter((item) => !existing.has(item.sourceUrl)), ...current.media] }
+          delete cursors[source]
+          const jobs = { ...current.catalogJobs }
+          if (savedJob.current) jobs[source] = savedJob
+          else delete jobs[source]
+          return { ...current, catalogCursors: cursors, catalogJobs: jobs, media: [...entries.filter((item) => !existing.has(item.sourceUrl)), ...current.media] }
         })
         added += entries.length
         batches += 1
-        start = cursor
+        start = job.current
         setNotice(`Added ${added} titles. ${start ? 'Scanning more pages…' : 'Scan complete.'}`)
       }
       if (added) setView('library')

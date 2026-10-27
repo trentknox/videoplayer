@@ -8,14 +8,18 @@ const page = await context.newPage()
 try {
   await page.route('**/api/analyze', async (route) => {
     const requested = route.request().postDataJSON().url
-    const listings = Array.from({ length: 30 }, (_, i) => ({ url: `https://media.example/film-${i}.mp4`, title: `Film ${i}` }))
-    await route.fulfill({ json: { provider: 'embed', kind: 'catalog', sourceUrl: requested, embedUrl: requested, title: 'Catalog', listings } })
+    const section = new URL(requested).pathname
+    const first = section === '/movies' ? 30 : section === '/shows' ? 32 : 0
+    const count = section === '/' ? 30 : 2
+    const listings = Array.from({ length: count }, (_, i) => ({ url: `https://media.example/film-${first + i}.mp4`, title: `Film ${first + i}` }))
+    const catalogSections = [{ url: 'https://catalog.example/movies', title: 'Movies' }, { url: 'https://catalog.example/shows', title: 'TV Shows' }]
+    await route.fulfill({ json: { provider: 'embed', kind: 'catalog', sourceUrl: requested, embedUrl: requested, title: 'Catalog', listings, catalogSections } })
   })
   await page.goto('http://127.0.0.1:4181/', { waitUntil: 'domcontentloaded' })
   await page.getByLabel('Source URL').fill('https://catalog.example/')
   await page.getByRole('button', { name: 'Import titles listed on this page' }).click()
-  await page.getByRole('status').getByText(/Added 30 titles\. Scan complete/).waitFor({ timeout: 30000 })
-  assert.match(await page.locator('.filter-summary').innerText(), /^31 items/)
+  await page.getByRole('status').getByText(/Added 34 titles\. Scan complete/).waitFor({ timeout: 30000 })
+  assert.match(await page.locator('.filter-summary').innerText(), /^35 items/)
   await page.getByRole('button', { name: 'playlists', exact: true }).click()
   await page.getByPlaceholder('New playlist name').fill('Test trilogy')
   await page.getByRole('button', { name: 'Create playlist' }).click()

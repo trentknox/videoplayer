@@ -52,7 +52,10 @@ export interface LibraryState {
   playlists: Playlist[]
   channels: Channel[]
   catalogCursors?: Record<string, string>
+  catalogJobs?: Record<string, CatalogJob>
 }
+
+export interface CatalogJob { current?: string; pending: string[]; seen: string[] }
 
 export interface ImportDraft {
   url: string

@@ -104,6 +104,7 @@ export function exportLibrary(state: LibraryState): void {
   const safeState: LibraryState = {
     ...state,
     catalogCursors: undefined,
+    catalogJobs: undefined,
     media: state.media.map((item) => ({ ...item, sourceUrl: redactUrl(item.sourceUrl), embedUrl: redactUrl(item.embedUrl) })),
   }
   const blob = new Blob([JSON.stringify(safeState, null, 2)], { type: 'application/json' })
