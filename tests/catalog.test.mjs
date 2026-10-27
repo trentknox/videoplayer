@@ -184,3 +184,17 @@ test('detects a same-origin public GET keyword search form and ignores unsafe fo
     assert.deepEqual(result.searchForm, { url: 'https://catalog.example/search', parameter: 'keyword' })
   } finally { globalThis.fetch = originalFetch }
 })
+
+test('public metadata keeps real durations and does not invent one when absent', async () => {
+  const originalFetch = globalThis.fetch
+  try {
+    const analyze = async (html) => {
+      globalThis.fetch = async () => new Response(html, { headers: { 'content-type': 'text/html' } })
+      return (await onRequestPost({ request: new Request('https://app.example/api/analyze', { method: 'POST', body: JSON.stringify({ url: 'https://catalog.example/title' }) }) })).json()
+    }
+    assert.equal((await analyze('<script type="application/ld+json">{"@type":"Movie","duration":"PT2H11M32S"}</script>')).durationSeconds, 7892)
+    assert.equal((await analyze('<script type="application/ld+json">{"@type":"VideoObject","duration":"PT42M","embedUrl":"https://video.example/player"}</script>')).durationSeconds, 2520)
+    assert.equal((await analyze('<script type="application/ld+json">{"@type":"Movie","duration":"P2D"}</script>')).durationSeconds, undefined)
+    assert.equal((await analyze('<title>Unknown runtime</title>')).durationSeconds, undefined)
+  } finally { globalThis.fetch = originalFetch }
+})

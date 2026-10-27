@@ -107,7 +107,16 @@ function findVideoObject(value: unknown, depth = 0): Record<string, unknown> | u
   return undefined
 }
 
+function durationSeconds(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined
+  const match = value.trim().match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$/i)
+  if (!match || (!match[1] && !match[2] && !match[3])) return undefined
+  const seconds = Number(match[1] || 0) * 3600 + Number(match[2] || 0) * 60 + Number(match[3] || 0)
+  return Number.isFinite(seconds) && seconds > 0 && seconds <= 86400 ? Math.round(seconds) : undefined
+}
+
 interface StructuredVideo {
+  durationSeconds?: number
   url?: string
   iframe?: string
   title?: string
@@ -128,6 +137,7 @@ function structuredVideo(html: string, base: URL): StructuredVideo {
         title: textField(video.name),
         poster: toPublicUrl(textField(thumbnail), base),
         description: textField(video.description),
+        durationSeconds: durationSeconds(video.duration),
       }
     } catch {
       // Invalid JSON-LD is common on public pages; continue to the next source.
@@ -136,7 +146,7 @@ function structuredVideo(html: string, base: URL): StructuredVideo {
   return {}
 }
 
-function catalogMetadata(html: string): { contentType?: 'movie' | 'series' | 'episode'; contentRating?: string; genres?: string[]; countries?: string[]; year?: number; actors?: string[]; rating?: number; budgetUsd?: number; revenueUsd?: number } {
+function catalogMetadata(html: string): { durationSeconds?: number; contentType?: 'movie' | 'series' | 'episode'; contentRating?: string; genres?: string[]; countries?: string[]; year?: number; actors?: string[]; rating?: number; budgetUsd?: number; revenueUsd?: number } {
   const find = (value: unknown, depth = 0): Record<string, unknown> | undefined => {
     if (!value || depth > 6) return undefined
     if (Array.isArray(value)) { for (const entry of value) { const found = find(entry, depth + 1); if (found) return found } return undefined }
@@ -166,6 +176,7 @@ function catalogMetadata(html: string): { contentType?: 'movie' | 'series' | 'ep
         return currency === 'USD' && Number.isFinite(number) && number >= 0 ? number : undefined
       }
       return {
+        durationSeconds: durationSeconds(record.duration),
         contentType: types.includes('Movie') ? 'movie' : types.includes('TVSeries') ? 'series' : 'episode',
         contentRating: textField(record.contentRating)?.slice(0, 40),
         genres: names(record.genre), countries: names(record.countryOfOrigin), actors: names(record.actor ?? record.actors),
@@ -412,6 +423,7 @@ export const onRequestPost = async ({ request }: AnalyzeContext): Promise<Respon
   const poster = candidate.poster ?? toPublicUrl(metadata(html, 'og:image') ?? metadata(html, 'twitter:image'), finalUrl)
   const description = candidate.description ?? metadata(html, 'og:description') ?? metadata(html, 'description')
 
+  const catalog = catalogMetadata(html)
   return respond({
     provider: candidate.url && directMedia.test(candidate.url) ? 'direct' : 'embed',
     kind: embedUrl ? 'video' : 'catalog',
@@ -421,8 +433,8 @@ export const onRequestPost = async ({ request }: AnalyzeContext): Promise<Respon
     title,
     poster,
     description,
-    ...catalogMetadata(html),
-    durationSeconds: 900,
+    ...catalog,
+    durationSeconds: catalog.durationSeconds ?? candidate.durationSeconds,
     listings: discoverListings(html, finalUrl),
     catalogSections: discoverCatalogSections(html, finalUrl),
     searchForm: discoverSearchForm(html, finalUrl),

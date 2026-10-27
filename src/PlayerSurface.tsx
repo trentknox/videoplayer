@@ -3,7 +3,7 @@ import type Hls from 'hls.js'
 import type { MediaItem } from './types'
 import { elapsedSeconds } from './scheduler'
 
-type YoutubePlayer = { destroy: () => void; getCurrentTime: () => number }
+type YoutubePlayer = { destroy: () => void; getCurrentTime: () => number; getDuration: () => number }
 type YoutubeApi = { Player: new (element: HTMLElement, options: { events: { onStateChange: (event: { data: number }) => void } }) => YoutubePlayer }
 declare global { interface Window { YT?: YoutubeApi; onYouTubeIframeAPIReady?: () => void } }
 let youtubeApiPromise: Promise<YoutubeApi> | undefined
@@ -27,7 +27,7 @@ function loadYoutubeApi(): Promise<YoutubeApi> {
   return youtubeApiPromise
 }
 
-function YoutubeSurface({ item, onEnded, onStarted, onProgress, autoPlay, slotStart, resumeAt }: { item: MediaItem; onEnded?: () => void; onStarted?: () => void; onProgress?: (seconds: number) => void; autoPlay?: boolean; slotStart?: string; resumeAt?: number }) {
+function YoutubeSurface({ item, onEnded, onStarted, onProgress, onDuration, autoPlay, slotStart, resumeAt }: { item: MediaItem; onEnded?: () => void; onStarted?: () => void; onProgress?: (seconds: number) => void; onDuration?: (seconds: number) => void; autoPlay?: boolean; slotStart?: string; resumeAt?: number }) {
   const container = useRef<HTMLDivElement>(null)
   const endedRef = useRef(onEnded)
   endedRef.current = onEnded
@@ -35,6 +35,8 @@ function YoutubeSurface({ item, onEnded, onStarted, onProgress, autoPlay, slotSt
   startedRef.current = onStarted
   const progressRef = useRef(onProgress)
   progressRef.current = onProgress
+  const durationRef = useRef(onDuration)
+  durationRef.current = onDuration
   useEffect(() => {
     const parent = container.current
     if (!parent) return
@@ -57,7 +59,7 @@ function YoutubeSurface({ item, onEnded, onStarted, onProgress, autoPlay, slotSt
     window.addEventListener('pagehide', captureProgress)
     void loadYoutubeApi().then((api) => {
       if (cancelled) return
-      player = new api.Player(frame, { events: { onStateChange: (event) => { if (event.data === 0) endedRef.current?.(); if (event.data === 1) startedRef.current?.(); if (event.data === 2) captureProgress() } } })
+      player = new api.Player(frame, { events: { onStateChange: (event) => { if (event.data === 0) endedRef.current?.(); if (event.data === 1) { startedRef.current?.(); try { const seconds = player?.getDuration(); if (seconds && Number.isFinite(seconds) && seconds <= 86400) durationRef.current?.(Math.round(seconds)) } catch { /* The player may not have duration information yet. */ } } if (event.data === 2) captureProgress() } } })
     }).catch(() => { /* The iframe remains playable even if the API fails. */ })
     return () => { cancelled = true; captureProgress(); window.clearInterval(progressTimer); window.removeEventListener('pagehide', captureProgress); player?.destroy(); frame.remove() }
   }, [item.id, item.embedUrl, item.title, item.kind, autoPlay, slotStart, resumeAt])
@@ -69,12 +71,13 @@ interface PlayerSurfaceProps {
   onEnded?: () => void
   onStarted?: () => void
   onProgress?: (seconds: number) => void
+  onDuration?: (seconds: number) => void
   resumeAt?: number
   autoPlay?: boolean
   slotStart?: string
 }
 
-export default function PlayerSurface({ item, onEnded, onStarted, onProgress, autoPlay, slotStart, resumeAt }: PlayerSurfaceProps) {
+export default function PlayerSurface({ item, onEnded, onStarted, onProgress, onDuration, autoPlay, slotStart, resumeAt }: PlayerSurfaceProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const hlsRef = useRef<Hls | null>(null)
   const [levels, setLevels] = useState<Array<{ index: number; label: string }>>([])
@@ -107,7 +110,7 @@ export default function PlayerSurface({ item, onEnded, onStarted, onProgress, au
       cancelled = true
       destroy?.()
     }
-  }, [item, isHls])
+  }, [item?.embedUrl, isHls])
 
   if (!item) {
     return (
@@ -130,7 +133,7 @@ export default function PlayerSurface({ item, onEnded, onStarted, onProgress, au
     </div>
   }
 
-  if (item.provider === 'youtube') return <YoutubeSurface item={item} onEnded={onEnded} onStarted={onStarted} onProgress={onProgress} autoPlay={autoPlay} slotStart={slotStart} resumeAt={resumeAt} />
+  if (item.provider === 'youtube') return <YoutubeSurface item={item} onEnded={onEnded} onStarted={onStarted} onProgress={onProgress} onDuration={onDuration} autoPlay={autoPlay} slotStart={slotStart} resumeAt={resumeAt} />
 
   if (item.provider === 'direct' || isHls) {
     return (
@@ -148,6 +151,7 @@ export default function PlayerSurface({ item, onEnded, onStarted, onProgress, au
         onLoadedMetadata={(event) => {
           if (item.kind !== 'video') return
           const video = event.currentTarget
+          if (Number.isFinite(video.duration) && video.duration > 0 && video.duration <= 86400) onDuration?.(Math.round(video.duration))
           const offset = slotStart ? elapsedSeconds(slotStart) : resumeAt ?? 0
           if (offset > 0 && Number.isFinite(video.duration) && offset < video.duration) video.currentTime = offset
         }}
