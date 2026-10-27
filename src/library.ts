@@ -3,6 +3,8 @@ import type { LibraryState } from './types'
 const DATABASE = 'vivid-media-library'
 const STORE = 'state'
 const KEY = 'library'
+const OLD_SAMPLE_URL = 'https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
+const SAMPLE_URL = 'https://www.w3schools.com/html/mov_bbb.mp4'
 
 const defaultState: LibraryState = {
   media: [
@@ -10,12 +12,12 @@ const defaultState: LibraryState = {
       id: 'big-buck-bunny',
       provider: 'direct',
       kind: 'video',
-      sourceUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-      embedUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+      sourceUrl: SAMPLE_URL,
+      embedUrl: SAMPLE_URL,
       title: 'Big Buck Bunny',
       description: 'A public sample video used to verify direct playback.',
-      durationSeconds: 596,
-      tags: ['sample', 'animation', 'public-domain'],
+      durationSeconds: 10,
+      tags: ['sample', 'animation'],
       actors: [],
       addedAt: new Date().toISOString(),
       importMode: 'single',
@@ -25,6 +27,15 @@ const defaultState: LibraryState = {
     { id: 'watch-later', name: 'Watch later', mediaIds: [], createdAt: new Date().toISOString() },
   ],
   channels: [],
+}
+
+export function migrateSample(state: LibraryState): LibraryState {
+  return {
+    ...state,
+    media: state.media.map((item) => item.id === 'big-buck-bunny' && item.sourceUrl === OLD_SAMPLE_URL && item.embedUrl === OLD_SAMPLE_URL
+      ? { ...item, sourceUrl: SAMPLE_URL, embedUrl: SAMPLE_URL, durationSeconds: 10 }
+      : item),
+  }
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -65,10 +76,10 @@ async function putValue<T>(key: string, value: T): Promise<void> {
 
 export async function loadLibrary(): Promise<LibraryState> {
   try {
-    return (await getValue<LibraryState>(KEY)) ?? defaultState
+    return migrateSample((await getValue<LibraryState>(KEY)) ?? defaultState)
   } catch {
     const local = window.localStorage.getItem(KEY)
-    return local ? JSON.parse(local) as LibraryState : defaultState
+    return migrateSample(local ? JSON.parse(local) as LibraryState : defaultState)
   }
 }
 
