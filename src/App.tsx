@@ -10,6 +10,8 @@ import { dueSource } from './sources'
 import { defaultFilters, filterLibrary } from './filters'
 import { adjacentChannel } from './channelNavigation'
 import { startUpdateMonitor } from './updateMonitor'
+import { aiLogin, aiLogout, searchWithAi } from './aiSearch'
+import type { AiSession, AiSearchResult } from './aiSearch'
 import type { LibraryFilters } from './filters'
 import { formatClock, makeSchedule, nowPlaying } from './scheduler'
 import type { AnalysisResult, Channel, ImportDraft, LibraryState, MediaItem, Playlist } from './types'
@@ -110,6 +112,12 @@ export default function App() {
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [search, setSearch] = useState('')
   const [homeSearch, setHomeSearch] = useState('')
+  const [aiSession, setAiSession] = useState<AiSession>()
+  const [gatewayAddress, setGatewayAddress] = useState('')
+  const [gatewayUser, setGatewayUser] = useState('')
+  const [gatewayPassword, setGatewayPassword] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiResult, setAiResult] = useState<AiSearchResult>()
   const [filters, setFilters] = useState<LibraryFilters>(defaultFilters)
   const [playlistName, setPlaylistName] = useState('')
   const [deletedPlaylist, setDeletedPlaylist] = useState<{ playlist: Playlist; index: number }>()
@@ -348,6 +356,38 @@ export default function App() {
     } finally { setImporting(false); setScanningCatalog(false) }
   }
 
+  async function connectAi(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault()
+    setAiBusy(true)
+    try {
+      const session = await aiLogin(gatewayAddress, gatewayUser, gatewayPassword)
+      setAiSession(session)
+      setGatewayPassword('')
+      setNotice('AI gateway connected for this session.')
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Could not connect to the AI gateway.') }
+    finally { setAiBusy(false) }
+  }
+
+  async function askAi(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault()
+    if (!aiSession) { setNotice('Connect your private AI gateway in Settings to use AI search.'); setView('settings'); return }
+    if (!library || !homeSearch.trim()) return
+    setAiBusy(true)
+    setAiResult(undefined)
+    try {
+      const result = await searchWithAi(aiSession, homeSearch, library.media)
+      setAiResult(result)
+      if (result.ids.length && result.action !== 'search') {
+        const playlist: Playlist = { id: makeId('playlist'), name: result.name, mediaIds: result.ids, createdAt: new Date().toISOString() }
+        const channel: Channel | undefined = result.action === 'channel' ? { id: makeId('channel'), name: result.name, description: `Loops the ${result.name} playlist in order.`, filter: '', accent: accents[library.channels.length % accents.length], anchor: new Date().toISOString(), durationHours: 24, playlistId: playlist.id } : undefined
+        updateLibrary((current) => ({ ...current, playlists: [playlist, ...current.playlists], channels: channel ? [channel, ...current.channels] : current.channels }))
+        if (channel) setClock(new Date())
+        setNotice(`Created ${channel ? 'channel' : 'playlist'} “${result.name}” with ${result.ids.length} titles.`)
+      } else setNotice(result.ids.length ? `Found ${result.ids.length} titles.` : 'AI found no matching titles in the items it examined.')
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'AI search failed.') }
+    finally { setAiBusy(false) }
+  }
+
   function addSource(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
     try {
@@ -521,8 +561,9 @@ export default function App() {
       <>
         <section className="content-section home-gallery" hidden={view !== 'home'}>
           <div className="section-heading"><div><span className="section-eyebrow">YOUR MEDIA</span><h1>Find something to watch</h1><p>Browse your library, or search by title, actor, genre, or series.</p></div>
-            <form className="home-search" onSubmit={(event) => { event.preventDefault(); setSearch(homeSearch); setView('library') }}><input aria-label="Search your library" value={homeSearch} onChange={(event) => setHomeSearch(event.target.value)} placeholder="Search your library…" /><button className="primary-button">Search</button></form>
+            <form className="home-search" onSubmit={askAi}><input aria-label="Search your library" value={homeSearch} onChange={(event) => setHomeSearch(event.target.value)} placeholder="Ask for a movie, playlist, or channel…" /><button className="primary-button" disabled={aiBusy}>{aiBusy ? 'Thinking…' : 'Ask AI'}</button><button type="button" className="secondary-button" onClick={() => { setSearch(homeSearch); setView('library') }}>Search library</button></form>
           </div>
+          {aiResult && <section aria-label="AI search results"><h2>{aiResult.name}</h2><p>{aiResult.ids.length} matches · examined {aiResult.examined} of {aiResult.total} library titles{aiResult.examined < aiResult.total ? ' (results may be incomplete)' : ''}</p><MediaGrid media={aiResult.ids.flatMap((id) => { const item = library.media.find((entry) => entry.id === id); return item ? [item] : [] })} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} /></section>}
           <h2>Explore your library</h2>
           <MediaGrid media={homeGallery} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} />
         </section>
@@ -623,6 +664,9 @@ export default function App() {
 
       {view === 'settings' && <section className="content-section settings-view">
         <span className="section-eyebrow">DATA & PROVIDERS</span><h1>Your library stays yours.</h1>
+        <section className="content-section"><h2>Private AI gateway</h2><p>Connect your self-hosted Vivid gateway over HTTPS. Your password and session stay in memory on this device; reconnect after closing Vivid. AI search sends your request and selected library metadata to that gateway.</p>
+          {aiSession ? <><p>Connected for this session.</p><button className="secondary-button" onClick={() => { const session = aiSession; setAiSession(undefined); setAiResult(undefined); void aiLogout(session).then(() => setNotice('AI gateway disconnected.')).catch(() => setNotice('Disconnected locally; the gateway session could not be revoked.')) }}>Disconnect AI</button></> : <form className="inline-form" onSubmit={connectAi}><input aria-label="AI gateway URL" placeholder="https://your-server.example" value={gatewayAddress} onChange={(event) => setGatewayAddress(event.target.value)} required /><input aria-label="AI account username" placeholder="Username" autoComplete="username" value={gatewayUser} onChange={(event) => setGatewayUser(event.target.value)} required /><input aria-label="AI account password" type="password" placeholder="Password" autoComplete="current-password" value={gatewayPassword} onChange={(event) => setGatewayPassword(event.target.value)} required /><button className="primary-button" disabled={aiBusy}>Connect AI</button></form>}
+        </section>
         <section className="content-section"><h2>Sources</h2><p>Saved sources refresh when Vivid is open, then about every six hours. New titles appear on Home. Catalog scans may take multiple batches; links are sent to Vivid’s analysis service.</p>
           <form className="inline-form" onSubmit={addSource}><input aria-label="Source URL to save" type="url" required value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://…" /><button className="primary-button">Add source</button></form>
           {(library.sources ?? []).map((source) => <div key={source.id}><span>{source.url}</span> <button className="text-button" onClick={() => updateLibrary((current) => ({ ...current, sources: current.sources?.filter((entry) => entry.id !== source.id) }))}>Remove source</button></div>)}
