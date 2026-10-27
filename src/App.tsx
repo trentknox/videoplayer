@@ -4,6 +4,7 @@ import PlayerSurface from './PlayerSurface'
 import { exportLibrary, importLibrary, loadLibrary, saveLibrary } from './library'
 import { analyzePublicPage, analyzeUrl, enrichYouTubeItem } from './providers'
 import { scanCatalog } from './catalogScan'
+import { movePlaylistItem } from './playlist'
 import { formatClock, makeSchedule, nowPlaying } from './scheduler'
 import type { AnalysisResult, Channel, ImportDraft, LibraryState, MediaItem, Playlist } from './types'
 
@@ -270,6 +271,14 @@ export default function App() {
     }))
   }
 
+  function moveInPlaylist(playlistId: string, mediaId: string, direction: -1 | 1): void {
+    updateLibrary((current) => ({
+      ...current,
+      playlists: current.playlists.map((playlist) => playlist.id === playlistId
+        ? { ...playlist, mediaIds: movePlaylistItem(playlist.mediaIds, mediaId, direction) } : playlist),
+    }))
+  }
+
   function createChannel(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
     const name = channelName.trim()
@@ -393,7 +402,7 @@ export default function App() {
         <div className="section-heading"><div><span className="section-eyebrow">CURATED QUEUES</span><h1>Playlists</h1></div></div>
         <form className="inline-form" onSubmit={createPlaylist}><input value={playlistName} onChange={(event) => setPlaylistName(event.target.value)} placeholder="New playlist name" /><button className="primary-button">Create playlist</button></form>
         <div className="playlist-grid">
-          {library.playlists.map((playlist) => <PlaylistCard key={playlist.id} playlist={playlist} media={library.media} onChange={(id, add) => updatePlaylist(playlist.id, id, add)} onPlay={(id) => { setActiveChannelId(undefined); setActivePlaylistId(playlist.id); setActiveId(id); setView('home') }} />)}
+          {library.playlists.map((playlist) => <PlaylistCard key={playlist.id} playlist={playlist} media={library.media} onChange={(id, add) => updatePlaylist(playlist.id, id, add)} onMove={(id, direction) => moveInPlaylist(playlist.id, id, direction)} onPlay={(id) => { setActiveChannelId(undefined); setActivePlaylistId(playlist.id); setActiveId(id); setView('home') }} />)}
         </div>
       </section>}
 
@@ -438,9 +447,11 @@ function MediaGrid({ media, activeId, onPlay, onRemove }: MediaGridProps) {
   </article>)}</div>
 }
 
-function PlaylistCard({ playlist, media, onPlay, onChange }: { playlist: Playlist; media: MediaItem[]; onPlay: (id: string) => void; onChange: (id: string, add: boolean) => void }) {
+function PlaylistCard({ playlist, media, onPlay, onChange, onMove }: { playlist: Playlist; media: MediaItem[]; onPlay: (id: string) => void; onChange: (id: string, add: boolean) => void; onMove: (id: string, direction: -1 | 1) => void }) {
   const entries = playlist.mediaIds.map((id) => media.find((item) => item.id === id)).filter((item): item is MediaItem => Boolean(item))
-  return <article className="playlist-card"><div className="playlist-cover"><span>≋</span></div><div><span className="section-eyebrow">PLAYLIST</span><h2>{playlist.name}</h2><p>{entries.length} saved title{entries.length === 1 ? '' : 's'}</p>{entries[0] && <button className="text-button" onClick={() => onPlay(entries[0].id)}>Play first →</button>}<details><summary>Edit titles</summary>{media.map((item) => <label className="checkbox-row" key={item.id}><input type="checkbox" checked={playlist.mediaIds.includes(item.id)} onChange={(event) => onChange(item.id, event.target.checked)} /> {item.title}</label>)}</details></div></article>
+  return <article className="playlist-card"><div className="playlist-cover"><span>≋</span></div><div><span className="section-eyebrow">PLAYLIST</span><h2>{playlist.name}</h2><p>{entries.length} saved title{entries.length === 1 ? '' : 's'}</p>{entries[0] && <button className="text-button" onClick={() => onPlay(entries[0].id)}>Play first →</button>}
+    {entries.length > 0 && <ol>{entries.map((item, index) => <li key={item.id}>{item.title} <button type="button" className="text-button" disabled={index === 0} aria-label={`Move ${item.title} earlier`} onClick={() => onMove(item.id, -1)}>↑</button> <button type="button" className="text-button" disabled={index === entries.length - 1} aria-label={`Move ${item.title} later`} onClick={() => onMove(item.id, 1)}>↓</button></li>)}</ol>}
+    <details><summary>Edit titles</summary>{media.map((item) => <label className="checkbox-row" key={item.id}><input type="checkbox" checked={playlist.mediaIds.includes(item.id)} onChange={(event) => onChange(item.id, event.target.checked)} /> {item.title}</label>)}</details></div></article>
 }
 
 function ChannelCard({ channel, media, clock, onPlay }: { channel: Channel; media: MediaItem[]; clock: Date; onPlay: () => void }) {
