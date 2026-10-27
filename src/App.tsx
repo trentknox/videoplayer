@@ -222,9 +222,9 @@ export default function App() {
           const analyzed = await Promise.all(batch.map(async (listing) => {
             try {
               const result = await analyzePublicPage(listing.url)
-              return toMediaItem({ ...result, title: result.title === new URL(listing.url).hostname ? listing.title : result.title, poster: result.poster ?? listing.poster }, { ...blankDraft, tags: draft.tags }, true)
+              return toMediaItem({ ...result, title: result.title === new URL(listing.url).hostname ? listing.title : result.title, poster: result.poster ?? listing.poster }, { ...blankDraft, tags: draft.tags, series: draft.series, season: listing.season?.toString() ?? draft.season, episode: listing.episode?.toString() ?? draft.episode }, true)
             } catch {
-              return toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster }, { ...blankDraft, tags: draft.tags }, true)
+              return toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster }, { ...blankDraft, tags: draft.tags, series: draft.series, season: listing.season?.toString() ?? draft.season, episode: listing.episode?.toString() ?? draft.episode }, true)
             }
           }))
           entries.push(...analyzed)

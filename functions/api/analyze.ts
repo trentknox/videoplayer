@@ -179,8 +179,8 @@ function publicCandidate(html: string, base: URL): StructuredVideo {
   }
 }
 
-function discoverListings(html: string, base: URL): Array<{ url: string; title: string; poster?: string }> {
-  const items: Array<{ url: string; title: string; poster?: string }> = []
+function discoverListings(html: string, base: URL): Array<{ url: string; title: string; poster?: string; season?: number; episode?: number }> {
+  const items: Array<{ url: string; title: string; poster?: string; season?: number; episode?: number }> = []
   const seen = new Set<string>()
   const attribute = (tag: string, name: string) => tag.match(new RegExp(`\\b${name}\\s*=\\s*["']([^"']+)["']`, 'i'))?.[1]
   for (const match of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi)) {
@@ -192,12 +192,13 @@ function discoverListings(html: string, base: URL): Array<{ url: string; title: 
     url.hash = ''
     if (url.origin !== base.origin || url.pathname === '/' || url.pathname === base.pathname || seen.has(url.href)) continue
     const image = content.match(/<img\b([^>]*)>/i)?.[1] ?? ''
-    if (!image && !/^\/watch(?:[-_][^/]+)?\/[^/]+/i.test(url.pathname)) continue
+    const episodeMatch = url.pathname.match(/(?:^|\/|[-_.])s(\d{1,3})[-_.]e(\d{1,3})(?:\/|$|[-_.])/i)
+    if (!image && !episodeMatch && !/^\/watch(?:[-_][^/]+)?\/[^/]+/i.test(url.pathname)) continue
     const title = attribute(tag, 'title') ?? attribute(tag, 'aria-label') ?? attribute(image, 'alt')
     if (!title || title.trim().length < 2) continue
     const poster = toPublicUrl(decodeEntities(attribute(image, 'src') ?? attribute(image, 'data-src') ?? ''), base)
     seen.add(url.href)
-    items.push({ url: url.href, title: decodeEntities(title.trim()).slice(0, 200), poster })
+    items.push({ url: url.href, title: decodeEntities(title.trim()).slice(0, 200), poster, season: episodeMatch ? Number(episodeMatch[1]) : undefined, episode: episodeMatch ? Number(episodeMatch[2]) : undefined })
   }
   return items
 }

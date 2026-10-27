@@ -80,7 +80,7 @@ export interface AnalysisResult {
   description?: string
   durationSeconds?: number
   notes?: string[]
-  listings?: Array<{ url: string; title: string; poster?: string }>
+  listings?: Array<{ url: string; title: string; poster?: string; season?: number; episode?: number }>
   catalogSections?: Array<{ url: string; title: string }>
   suggestedCatalogUrl?: string
   nextCatalogUrl?: string

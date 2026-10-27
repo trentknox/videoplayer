@@ -50,6 +50,16 @@ test('catalog discovery identifies distinct same-site movies and series sections
   } finally { globalThis.fetch = originalFetch }
 })
 
+test('episode links without posters retain season and episode numbers', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response('<a href="/episode/show/s02-e03/" title="Episode 3: Example">Episode</a>', { headers: { 'content-type': 'text/html' } })
+  try {
+    const request = new Request('https://app.example/api/analyze', { method: 'POST', body: JSON.stringify({ url: 'https://catalog.example/show' }) })
+    const result = await (await onRequestPost({ request })).json()
+    assert.deepEqual(result.listings, [{ url: 'https://catalog.example/episode/show/s02-e03/', title: 'Episode 3: Example', season: 2, episode: 3 }])
+  } finally { globalThis.fetch = originalFetch }
+})
+
 test('large listing pages remain discoverable across successive import batches', async () => {
   const originalFetch = globalThis.fetch
   const html = Array.from({ length: 225 }, (_, i) => `<a href="/films/${i}" title="Film ${i}"><img src="/poster.jpg"></a>`).join('')

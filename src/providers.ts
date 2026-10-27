@@ -160,11 +160,12 @@ export async function analyzePublicPage(rawUrl: string): Promise<AnalysisResult>
           const url = new URL(link.getAttribute('href') || '', pageUrl)
           url.hash = ''
           const image = link.querySelector('img')
-          if (!image && !/^\/watch(?:[-_][^/]+)?\/[^/]+/i.test(url.pathname)) continue
+          const episodeMatch = url.pathname.match(/(?:^|\/|[-_.])s(\d{1,3})[-_.]e(\d{1,3})(?:\/|$|[-_.])/i)
+          if (!image && !episodeMatch && !/^\/watch(?:[-_][^/]+)?\/[^/]+/i.test(url.pathname)) continue
           const title = link.getAttribute('title') || link.getAttribute('aria-label') || image?.getAttribute('alt')
           if (url.origin !== pageUrl.origin || url.pathname === '/' || url.pathname === pageUrl.pathname || !title || title.trim().length < 2 || seen.has(url.href)) continue
           seen.add(url.href)
-          listings.push({ url: url.href, title: title.trim().slice(0, 200) })
+          listings.push({ url: url.href, title: title.trim().slice(0, 200), season: episodeMatch ? Number(episodeMatch[1]) : undefined, episode: episodeMatch ? Number(episodeMatch[2]) : undefined })
         } catch { /* Ignore malformed links. */ }
       }
       const exposed = meta('og:video:secure_url') ?? meta('og:video:url') ?? meta('og:video') ?? meta('twitter:player:stream')
