@@ -1,6 +1,6 @@
 import type { MediaItem } from './types'
 
-export interface LibraryFilters { query: string; type: string; genre: string; country: string; year: string; sort: 'added' | 'title' | 'year' | 'rating' | 'budget' | 'revenue'; order: 'asc' | 'desc' }
+export interface LibraryFilters { query: string; type: string; genre: string; country: string; year: string; sort: 'added' | 'title' | 'year' | 'rating' | 'imdb' | 'metacritic' | 'budget' | 'revenue'; order: 'asc' | 'desc' }
 export const defaultFilters: LibraryFilters = { query: '', type: '', genre: '', country: '', year: '', sort: 'added', order: 'desc' }
 
 export function mediaType(item: MediaItem): MediaItem['contentType'] {
@@ -31,8 +31,8 @@ export function filterLibrary(items: MediaItem[], filters: LibraryFilters): Medi
   })
   const factor = filters.order === 'asc' ? 1 : -1
   return selected.sort((a, b) => {
-    if (['year', 'rating', 'budget', 'revenue'].includes(filters.sort)) {
-      const key = ({ year: 'year', rating: 'rating', budget: 'budgetUsd', revenue: 'revenueUsd' } as const)[filters.sort as 'year' | 'rating' | 'budget' | 'revenue']
+    if (['year', 'rating', 'imdb', 'metacritic', 'budget', 'revenue'].includes(filters.sort)) {
+      const key = ({ year: 'year', rating: 'rating', imdb: 'imdbRating', metacritic: 'metacriticScore', budget: 'budgetUsd', revenue: 'revenueUsd' } as const)[filters.sort as 'year' | 'rating' | 'imdb' | 'metacritic' | 'budget' | 'revenue']
       const first = key === 'year' ? mediaYear(a) : a[key], second = key === 'year' ? mediaYear(b) : b[key]
       if (first === undefined || second === undefined) return first !== undefined ? -1 : second !== undefined ? 1 : 0
       return factor * (first - second)

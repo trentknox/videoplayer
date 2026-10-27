@@ -8,6 +8,8 @@ const context = await browser.newContext()
 const page = await context.newPage()
 try {
   await page.goto(process.env.VIVID_TEST_URL || 'https://vivid-media-player.pages.dev/', { waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: 'library', exact: true }).click()
+  await page.locator('details.import-card > summary').click()
   await page.getByLabel('Source URL').fill(url)
   await page.getByRole('button', { name: 'Analyze & import' }).click()
   await page.getByRole('button', { name: 'Play Cloudflare Stream video' }).click()

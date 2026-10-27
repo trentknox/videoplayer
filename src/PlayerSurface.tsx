@@ -72,13 +72,15 @@ interface PlayerSurfaceProps {
   onStarted?: () => void
   onProgress?: (seconds: number) => void
   onDuration?: (seconds: number) => void
+  onAutoPlayNotice?: (message: string) => void
   resumeAt?: number
   autoPlay?: boolean
   slotStart?: string
 }
 
-export default function PlayerSurface({ item, onEnded, onStarted, onProgress, onDuration, autoPlay, slotStart, resumeAt }: PlayerSurfaceProps) {
+export default function PlayerSurface({ item, onEnded, onStarted, onProgress, onDuration, onAutoPlayNotice, autoPlay, slotStart, resumeAt }: PlayerSurfaceProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const autoplayAttempted = useRef(false)
   const hlsRef = useRef<Hls | null>(null)
   const [levels, setLevels] = useState<Array<{ index: number; label: string }>>([])
   const [quality, setQuality] = useState(-1)
@@ -145,6 +147,15 @@ export default function PlayerSurface({ item, onEnded, onStarted, onProgress, on
         autoPlay={autoPlay}
         playsInline
         onEnded={onEnded}
+        onCanPlay={(event) => {
+          const video = event.currentTarget
+          if (!autoPlay || autoplayAttempted.current || !video.paused) return
+          autoplayAttempted.current = true
+          void video.play().catch(() => {
+            video.muted = true
+            void video.play().then(() => onAutoPlayNotice?.('Playback started muted. Use the player controls to turn sound on.')).catch(() => onAutoPlayNotice?.('The browser blocked autoplay. Press play to start.'))
+          })
+        }}
         onPlay={onStarted}
         onTimeUpdate={(event) => { if (event.currentTarget.readyState >= 1) onProgress?.(event.currentTarget.currentTime) }}
         onPause={(event) => onProgress?.(event.currentTarget.currentTime)}

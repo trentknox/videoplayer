@@ -198,3 +198,16 @@ test('public metadata keeps real durations and does not invent one when absent',
     assert.equal((await analyze('<title>Unknown runtime</title>')).durationSeconds, undefined)
   } finally { globalThis.fetch = originalFetch }
 })
+
+test('extracts public cast links and attributes ratings only to explicitly named providers', async () => {
+  const originalFetch=globalThis.fetch
+  try {
+    globalThis.fetch=async()=>new Response(`<script type="application/ld+json">{"@type":"Movie","aggregateRating":{"ratingValue":81,"bestRating":100,"author":{"name":"Metacritic"}}}</script><div class="row-line"><span class="type">Casts:</span> <a href="/actor/keanu">Keanu Reeves</a>, <a href="https://other.example/actor">Other Person</a></div>`,{headers:{'content-type':'text/html'}})
+    const request=new Request('https://app.example/api/analyze',{method:'POST',body:JSON.stringify({url:'https://catalog.example/title'})})
+    const result=await (await onRequestPost({request})).json()
+    assert.deepEqual(result.actors,['Keanu Reeves'])
+    assert.deepEqual(result.people,[{name:'Keanu Reeves',url:'https://catalog.example/actor/keanu'}])
+    assert.equal(result.metacriticScore,81)
+    assert.equal(result.imdbRating,undefined)
+  } finally {globalThis.fetch=originalFetch}
+})

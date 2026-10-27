@@ -17,10 +17,13 @@ export interface MediaItem {
   countries?: string[]
   year?: number
   rating?: number
+  imdbRating?: number
+  metacriticScore?: number
   budgetUsd?: number
   revenueUsd?: number
   poster?: string
   durationSeconds: number
+  durationEstimated?: boolean
   tags: string[]
   franchise?: string
   series?: string
@@ -104,12 +107,16 @@ export interface AnalysisResult {
   countries?: string[]
   year?: number
   rating?: number
+  imdbRating?: number
+  metacriticScore?: number
   budgetUsd?: number
   revenueUsd?: number
   actors?: string[]
   durationSeconds?: number
+  durationEstimated?: boolean
   notes?: string[]
-  listings?: Array<{ url: string; title: string; poster?: string; year?: number; season?: number; episode?: number }>
+  people?: Array<{ name: string; url: string }>
+  listings?: Array<{ url: string; title: string; poster?: string; year?: number; season?: number; episode?: number; actors?: string[] }>
   catalogSections?: Array<{ url: string; title: string }>
   searchForm?: { url: string; parameter: string }
   suggestedCatalogUrl?: string

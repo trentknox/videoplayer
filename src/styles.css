@@ -199,3 +199,9 @@ input:focus { border-color: #9b90ff; box-shadow: 0 0 0 3px rgba(155,144,255,.14)
 .import-card > summary, .import-advanced > summary { cursor: pointer; color: #edeaff; font-weight: 650; }
 .import-advanced { display: grid; gap: 12px; }
 .import-advanced[open] > summary { margin-bottom: 14px; }
+
+.ai-preview-play { display: block; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.ai-preview-include { display: flex; align-items: center; gap: 6px; padding: 8px 10px 0; color: #d1d9ec; font-size: .85rem; }
+.ai-preview-include input { width: auto; margin: 0; }
+
+.ai-suggestion-actions { display: flex; flex-wrap: wrap; gap: 8px; }

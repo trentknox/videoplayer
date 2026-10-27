@@ -24,7 +24,7 @@ function youtubeAnalysis(url: URL): AnalysisResult | null {
     return {
       provider: 'youtube', kind: 'playlist', sourceUrl: url.toString(), externalId: playlist,
       embedUrl: `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(playlist)}&rel=0`,
-      title: 'YouTube playlist', durationSeconds: 1800,
+      title: 'YouTube playlist', durationSeconds: 1800, durationEstimated: true,
       notes: ['Saved as a playlist source. Full enumeration needs a permitted YouTube Data API connection.'],
     }
   }
@@ -32,13 +32,13 @@ function youtubeAnalysis(url: URL): AnalysisResult | null {
     return {
       provider: 'youtube', kind: 'video', sourceUrl: url.toString(), externalId: videoId,
       embedUrl: `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?rel=0`,
-      title: 'YouTube video', poster: `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`, durationSeconds: 900,
+      title: 'YouTube video', poster: `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg`, durationSeconds: 900, durationEstimated: true,
     }
   }
   if (url.pathname.includes('/channel/') || url.pathname.startsWith('/@')) {
     return {
       provider: 'youtube', kind: 'channel', sourceUrl: url.toString(), embedUrl: url.toString(),
-      title: 'YouTube channel', durationSeconds: 1800,
+      title: 'YouTube channel', durationSeconds: 1800, durationEstimated: true,
       notes: ['Saved as a channel source. Connect the YouTube Data API to enumerate uploads.'],
     }
   }
@@ -54,7 +54,7 @@ function twitchAnalysis(url: URL): AnalysisResult | null {
     return {
       provider: 'twitch', kind: 'video', sourceUrl: url.toString(), externalId: segments[1],
       embedUrl: `https://player.twitch.tv/?video=${encodeURIComponent(segments[1])}&parent=${encodeURIComponent(parent)}`,
-      title: 'Twitch video', durationSeconds: 3600,
+      title: 'Twitch video', durationSeconds: 3600, durationEstimated: true,
     }
   }
   const channel = url.searchParams.get('channel') ?? segments[0]
@@ -62,7 +62,7 @@ function twitchAnalysis(url: URL): AnalysisResult | null {
     return {
       provider: 'twitch', kind: 'channel', sourceUrl: url.toString(), externalId: channel,
       embedUrl: `https://player.twitch.tv/?channel=${encodeURIComponent(channel)}&parent=${encodeURIComponent(parent)}`,
-      title: `Twitch · ${channel}`, durationSeconds: 3600,
+      title: `Twitch · ${channel}`, durationSeconds: 3600, durationEstimated: true,
     }
   }
   return null
@@ -83,7 +83,7 @@ function cloudflareStreamAnalysis(url: URL): AnalysisResult | null {
   if (!iframeUrl && !isManifest) return null
   return {
     provider: 'cloudflare-stream', kind: isManifest || url.pathname.includes('live') ? 'stream' : 'video', sourceUrl: url.toString(), externalId: uid,
-    embedUrl: isManifest ? url.toString() : iframeUrl!, title: 'Cloudflare Stream video', durationSeconds: 900,
+    embedUrl: isManifest ? url.toString() : iframeUrl!, title: 'Cloudflare Stream video', durationSeconds: 900, durationEstimated: true,
     notes: [isManifest
       ? 'Cloudflare Stream HLS is read directly from the provider; Vivid does not proxy or cache it.'
       : 'Cloudflare Stream media is played from its provider-hosted player.'],
@@ -95,7 +95,7 @@ function plexAnalysis(url: URL): AnalysisResult | null {
   if (!host.includes('plex') && !url.pathname.includes('web/index.html')) return null
   return {
     provider: 'plex', kind: 'catalog', sourceUrl: url.toString(), embedUrl: url.toString(),
-    title: 'Plex source', durationSeconds: 1800,
+    title: 'Plex source', durationSeconds: 1800, durationEstimated: true,
     notes: ['Plex connections stay in this browser. Do not add account tokens to a public deployment.'],
   }
 }
@@ -108,23 +108,23 @@ export function analyzeUrl(rawUrl: string): AnalysisResult {
   if (mediaExtension.test(url.pathname)) {
     return {
       provider: 'direct', kind: url.pathname.endsWith('.m3u8') ? 'stream' : 'video', sourceUrl: url.toString(), embedUrl: url.toString(),
-      title: titleFromUrl(url), durationSeconds: 900,
+      title: titleFromUrl(url), durationSeconds: 900, durationEstimated: true,
       notes: ['Direct playback depends on the source server allowing browser CORS and range requests.'],
     }
   }
   return {
-    provider: 'embed', kind: 'catalog', sourceUrl: url.toString(), embedUrl: url.toString(), title: titleFromUrl(url), durationSeconds: 1800,
+    provider: 'embed', kind: 'catalog', sourceUrl: url.toString(), embedUrl: url.toString(), title: titleFromUrl(url), durationSeconds: 1800, durationEstimated: true,
     notes: ['Saved the page link. The page may block embedding; its media has not been identified.'],
   }
 }
 
-export async function analyzePublicPage(rawUrl: string): Promise<AnalysisResult> {
+export async function analyzePublicPage(rawUrl: string, signal?: AbortSignal): Promise<AnalysisResult> {
   const fallback = analyzeUrl(rawUrl)
   if (fallback.provider !== 'embed') return fallback
   try {
     const endpoint = window.location.protocol === 'file:' ? 'https://vivid-media-player.pages.dev/api/analyze' : '/api/analyze'
     const response = await fetch(endpoint, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: rawUrl }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: rawUrl }), signal,
     })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const result = await response.json() as Partial<AnalysisResult>
@@ -132,14 +132,15 @@ export async function analyzePublicPage(rawUrl: string): Promise<AnalysisResult>
     return {
       provider: result.provider as Provider, kind: result.kind, sourceUrl: result.sourceUrl, embedUrl: result.embedUrl,
       externalId: result.externalId, title: result.title, poster: result.poster, description: result.description, playerOptions: result.playerOptions,
-      contentType: result.contentType, contentRating: result.contentRating, genres: result.genres, countries: result.countries, year: result.year, actors: result.actors, rating: result.rating, budgetUsd: result.budgetUsd, revenueUsd: result.revenueUsd,
-      durationSeconds: result.durationSeconds, notes: result.notes, listings: result.listings, catalogSections: result.catalogSections, searchForm: result.searchForm, suggestedCatalogUrl: result.suggestedCatalogUrl, nextCatalogUrl: result.nextCatalogUrl,
+      contentType: result.contentType, contentRating: result.contentRating, genres: result.genres, countries: result.countries, year: result.year, actors: result.actors, rating: result.rating, imdbRating: result.imdbRating, metacriticScore: result.metacriticScore, budgetUsd: result.budgetUsd, revenueUsd: result.revenueUsd,
+      durationSeconds: result.durationSeconds, notes: result.notes, people: result.people, listings: result.listings, catalogSections: result.catalogSections, searchForm: result.searchForm, suggestedCatalogUrl: result.suggestedCatalogUrl, nextCatalogUrl: result.nextCatalogUrl,
     }
   } catch {
+    if (signal?.aborted) return { ...fallback, analysisUnavailable: true, notes: ['Source search timed out.'] }
     // A browser can inspect a page only when that page permits cross-origin reads.
     // This path also works in the desktop shell without exposing a local server.
     try {
-      const response = await fetch(fallback.sourceUrl, { mode: 'cors', credentials: 'omit', signal: AbortSignal.timeout(8000) })
+      const response = await fetch(fallback.sourceUrl, { mode: 'cors', credentials: 'omit', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000) })
       if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) throw new Error('Page unavailable')
       const html = (await response.text()).slice(0, 350_000)
       const document = new DOMParser().parseFromString(html, 'text/html')

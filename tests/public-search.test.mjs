@@ -22,3 +22,32 @@ test('cross-origin forms and sources without a public search are not queried', a
   assert.equal(result.searched, 0)
   assert.equal(result.unavailable, 1)
 })
+
+test('source search follows an exact same-site cast link to find filmography', async () => {
+  const calls=[]
+  const analyze=async (url) => {
+    calls.push(url)
+    const base={provider:'embed',kind:'catalog',sourceUrl:url,embedUrl:url,title:'Page'}
+    if(url==='https://catalog.example/') return {...base,searchForm:{url:'https://catalog.example/search',parameter:'keyword'}}
+    if(url.startsWith('https://catalog.example/search')) return {...base,listings:[{url:'https://catalog.example/documentary',title:'Keanu Reeves documentary'}]}
+    if(url==='https://catalog.example/documentary') return {...base,people:[{name:'Keanu Reeves',url:'https://catalog.example/actor/keanu'}]}
+    if(url==='https://catalog.example/actor/keanu') return {...base,listings:[{url:'https://catalog.example/matrix',title:'The Matrix'},{url:'https://catalog.example/wick',title:'John Wick'}]}
+    throw new Error('Unexpected URL')
+  }
+  const result=await searchPublicSources([{id:'source',url:'https://catalog.example/'}],'Keanu Reeves',analyze)
+  assert.equal(result.listings.length,3)
+  assert.deepEqual(result.listings.find(item=>item.title==='The Matrix').actors,['Keanu Reeves'])
+  assert.ok(calls.includes('https://catalog.example/actor/keanu'))
+})
+
+test('actor expansion refuses a cross-origin cast link', async () => {
+  const calls=[]
+  const analyze=async (url) => {
+    calls.push(url);const base={provider:'embed',kind:'catalog',sourceUrl:url,embedUrl:url,title:'Page'}
+    if(url==='https://catalog.example/')return {...base,searchForm:{url:'https://catalog.example/search',parameter:'keyword'}}
+    if(url.startsWith('https://catalog.example/search'))return {...base,listings:[{url:'https://catalog.example/doc',title:'Person document'}]}
+    return {...base,people:[{name:'Keanu Reeves',url:'https://other.example/actor'}]}
+  }
+  await searchPublicSources([{id:'source',url:'https://catalog.example/'}],'Keanu Reeves',analyze)
+  assert.ok(!calls.some(url=>url.startsWith('https://other.example/')))
+})

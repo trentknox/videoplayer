@@ -146,7 +146,7 @@ function structuredVideo(html: string, base: URL): StructuredVideo {
   return {}
 }
 
-function catalogMetadata(html: string): { durationSeconds?: number; contentType?: 'movie' | 'series' | 'episode'; contentRating?: string; genres?: string[]; countries?: string[]; year?: number; actors?: string[]; rating?: number; budgetUsd?: number; revenueUsd?: number } {
+function catalogMetadata(html: string): { durationSeconds?: number; imdbRating?: number; metacriticScore?: number; contentType?: 'movie' | 'series' | 'episode'; contentRating?: string; genres?: string[]; countries?: string[]; year?: number; actors?: string[]; rating?: number; budgetUsd?: number; revenueUsd?: number } {
   const find = (value: unknown, depth = 0): Record<string, unknown> | undefined => {
     if (!value || depth > 6) return undefined
     if (Array.isArray(value)) { for (const entry of value) { const found = find(entry, depth + 1); if (found) return found } return undefined }
@@ -168,6 +168,8 @@ function catalogMetadata(html: string): { durationSeconds?: number; contentType?
       const ratingRecord = record.aggregateRating && typeof record.aggregateRating === 'object' ? record.aggregateRating as Record<string, unknown> : undefined
       const rating = Number(ratingRecord?.ratingValue)
       const maximum = Number(ratingRecord?.bestRating ?? 10)
+      const author = ratingRecord?.author && typeof ratingRecord.author === 'object' ? textField((ratingRecord.author as Record<string, unknown>).name) : textField(ratingRecord?.author)
+      const normalized = Number.isFinite(rating) && Number.isFinite(maximum) && maximum > 0 && rating >= 0 && rating <= maximum ? rating / maximum : undefined
       const usd = (value: unknown): number | undefined => {
         if (!value || typeof value !== 'object') return undefined
         const amount = value as Record<string, unknown>
@@ -181,12 +183,29 @@ function catalogMetadata(html: string): { durationSeconds?: number; contentType?
         contentRating: textField(record.contentRating)?.slice(0, 40),
         genres: names(record.genre), countries: names(record.countryOfOrigin), actors: names(record.actor ?? record.actors),
         year: match ? Number(match[1]) : undefined,
-        rating: Number.isFinite(rating) && Number.isFinite(maximum) && maximum > 0 && rating >= 0 && rating <= maximum ? rating / maximum * 10 : undefined,
+        rating: normalized === undefined ? undefined : normalized * 10,
+        imdbRating: normalized !== undefined && author?.toLowerCase() === 'imdb' ? normalized * 10 : undefined,
+        metacriticScore: normalized !== undefined && author?.toLowerCase() === 'metacritic' ? normalized * 100 : undefined,
         budgetUsd: usd(record.budget), revenueUsd: usd(record.boxOffice ?? record.revenue),
       }
     } catch { /* Ignore malformed structured data. */ }
   }
   return {}
+}
+
+function pageCast(html: string, base: URL): Array<{ name: string; url: string }> {
+  const names: Array<{ name: string; url: string }> = []
+  for (const row of html.matchAll(/<div\b[^>]*class=["'][^"']*\brow-line\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/gi)) {
+    if (!/<span\b[^>]*>\s*(?:cast|casts|starring)\s*:/i.test(row[1])) continue
+    for (const link of row[1].matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+      const url = toPublicUrl(decodeEntities(link[1]), base)
+      if (!url || new URL(url).origin !== base.origin) continue
+      const name = decodeEntities(link[2].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()).slice(0, 120)
+      if (name && !names.some((item) => item.name === name)) names.push({ name, url })
+      if (names.length >= 30) return names
+    }
+  }
+  return names
 }
 
 async function readLimited(response: Response): Promise<string> {
@@ -424,6 +443,7 @@ export const onRequestPost = async ({ request }: AnalyzeContext): Promise<Respon
   const description = candidate.description ?? metadata(html, 'og:description') ?? metadata(html, 'description')
 
   const catalog = catalogMetadata(html)
+  const cast = pageCast(html, finalUrl)
   return respond({
     provider: candidate.url && directMedia.test(candidate.url) ? 'direct' : 'embed',
     kind: embedUrl ? 'video' : 'catalog',
@@ -434,6 +454,8 @@ export const onRequestPost = async ({ request }: AnalyzeContext): Promise<Respon
     poster,
     description,
     ...catalog,
+    actors: [...new Set([...(catalog.actors ?? []), ...cast.map((item) => item.name)])],
+    people: cast,
     durationSeconds: catalog.durationSeconds ?? candidate.durationSeconds,
     listings: discoverListings(html, finalUrl),
     catalogSections: discoverCatalogSections(html, finalUrl),

@@ -3,7 +3,7 @@ type Analyze = (url: string) => Promise<AnalysisResult>
 type Listing = NonNullable<AnalysisResult['listings']>[number]
 
 export function sourceSearchTerms(query: string): string {
-  const stop = new Set(['the','and','for','all','movie','movies','series','channel','channels','playlist','create','generate','make','loop','with','from','show','shows','please','everything','watch','find','search','24'])
+  const stop = new Set(['the','and','for','all','by','of','movie','movies','series','channel','channels','playlist','create','generate','make','loop','with','from','show','shows','please','everything','watch','find','search','24'])
   return (query.match(/[\p{L}\p{N}]+/gu) ?? []).filter((word) => word.length > 1 && !stop.has(word.toLowerCase())).join(' ').slice(0, 200)
 }
 
@@ -33,6 +33,32 @@ export async function searchPublicSources(sources: SavedSource[], query: string,
         }
         pages++
         try { const next: URL | undefined = result.nextCatalogUrl ? new URL(result.nextCatalogUrl, sourceUrl) : undefined; current = next && next.origin === sourceUrl.origin && !visited.has(next.href) ? next.href : undefined } catch { current = undefined }
+      }
+      // A site search for a person may return only a documentary. Follow an
+      // exact cast link from a result to the site's public filmography page.
+      if (listings.length <= 2 && terms.trim().includes(' ')) {
+        const snapshot = listings.filter((item) => { try { return new URL(item.url).origin === sourceUrl.origin } catch { return false } }).slice(0, 2)
+        for (const listing of snapshot) {
+          const detail = await analyze(listing.url)
+          if (detail.analysisUnavailable) break
+          const person = detail.people?.find((entry) => entry.name.trim().toLocaleLowerCase() === terms.trim().toLocaleLowerCase())
+          if (!person) continue
+          const personUrl = new URL(person.url, sourceUrl)
+          if (personUrl.origin !== sourceUrl.origin || personUrl.username || personUrl.password) continue
+          let filmographyUrl: string | undefined = personUrl.href
+          const personPages = new Set<string>()
+          while (filmographyUrl && personPages.size < 3 && !personPages.has(filmographyUrl)) {
+            personPages.add(filmographyUrl)
+            const filmography = await analyze(filmographyUrl)
+            if (filmography.analysisUnavailable) { incomplete = true; break }
+            for (const item of filmography.listings ?? []) {
+              try { const itemUrl = new URL(item.url); if (itemUrl.origin !== sourceUrl.origin || seen.has(itemUrl.href)) continue; seen.add(itemUrl.href); listings.push({ ...item, actors: [person.name] }) } catch { /* Ignore invalid links. */ }
+            }
+            try { const next: URL | undefined = filmography.nextCatalogUrl ? new URL(filmography.nextCatalogUrl, sourceUrl) : undefined; filmographyUrl = next && next.origin === sourceUrl.origin && !personPages.has(next.href) ? next.href : undefined } catch { filmographyUrl = undefined }
+          }
+          if (filmographyUrl) incomplete = true
+          break
+        }
       }
       searched++
       if (current) incomplete = true
