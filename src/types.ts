@@ -7,6 +7,7 @@ export interface MediaItem {
   kind: MediaKind
   sourceUrl: string
   embedUrl: string
+  playerOptions?: Array<{ name: string; url: string }>
   externalId?: string
   title: string
   description?: string
@@ -74,6 +75,7 @@ export interface AnalysisResult {
   kind: MediaKind
   sourceUrl: string
   embedUrl: string
+  playerOptions?: Array<{ name: string; url: string }>
   externalId?: string
   title: string
   poster?: string

@@ -180,26 +180,33 @@ function publicCandidate(html: string, base: URL): StructuredVideo {
 }
 
 // This site's normal public play action uses a page-provided identifier to request player URLs.
-async function discoverSitePlayer(html: string, base: URL): Promise<string | undefined> {
-  if (base.hostname.toLowerCase() !== '1movies.stream') return undefined
+async function discoverSitePlayers(html: string, base: URL): Promise<Array<{ name: string; url: string }>> {
+  if (base.hostname.toLowerCase() !== '1movies.stream') return []
   const tag = html.match(/<[^>]*\bid=["']series-player["'][^>]*>/i)?.[0]
   const token = tag?.match(/\bdata-token=["']([^"']{1,4096})["']/i)?.[1]
-  if (!token) return undefined
+  if (!token) return []
   try {
     const body = new URLSearchParams({ players_show: decodeEntities(token) })
     const response = await fetch(new URL('/ajax/ajax.php', base), { method: 'POST', body, redirect: 'manual', signal: AbortSignal.timeout(8000) })
-    if (!response.ok) return undefined
+    if (!response.ok) return []
     const raw = (await readLimited(response)).slice(0, 65536)
     const parsed: unknown = JSON.parse(raw)
     const players = Array.isArray(parsed) ? parsed : [parsed]
+    const results: Array<{ name: string; url: string }> = []
+    const seen = new Set<string>()
     for (const player of players) {
       if (!player || typeof player !== 'object') continue
-      const link = textField((player as Record<string, unknown>).link)
+      const record = player as Record<string, unknown>
+      const link = textField(record.link)
       const url = toPublicUrl(link, base)
-      if (url) return url
+      if (!url || seen.has(url)) continue
+      seen.add(url)
+      results.push({ name: (textField(record.name) ?? `Player ${results.length + 1}`).slice(0, 80), url })
+      if (results.length >= 10) break
     }
+    return results
   } catch { /* Fall back to a saved page when the public player request fails. */ }
-  return undefined
+  return []
 }
 
 function discoverListings(html: string, base: URL): Array<{ url: string; title: string; poster?: string; season?: number; episode?: number }> {
@@ -317,7 +324,8 @@ export const onRequestPost = async ({ request }: AnalyzeContext): Promise<Respon
 
   const html = await readLimited(response)
   const candidate = publicCandidate(html, finalUrl)
-  const embedUrl = candidate.url ?? candidate.iframe ?? await discoverSitePlayer(html, finalUrl)
+  const playerOptions = candidate.url || candidate.iframe ? [] : await discoverSitePlayers(html, finalUrl)
+  const embedUrl = candidate.url ?? candidate.iframe ?? playerOptions[0]?.url
   const title = candidate.title ?? titleFromDocument(html) ?? finalUrl.hostname
   const poster = candidate.poster ?? toPublicUrl(metadata(html, 'og:image') ?? metadata(html, 'twitter:image'), finalUrl)
   const description = candidate.description ?? metadata(html, 'og:description') ?? metadata(html, 'description')
@@ -327,6 +335,7 @@ export const onRequestPost = async ({ request }: AnalyzeContext): Promise<Respon
     kind: embedUrl ? 'video' : 'catalog',
     sourceUrl: target.toString(),
     embedUrl: embedUrl ?? finalUrl.toString(),
+    playerOptions,
     title,
     poster,
     description,

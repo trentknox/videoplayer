@@ -65,7 +65,7 @@ test('public play action yields an embed without accepting private player addres
   const methods = []
   globalThis.fetch = async (url, options) => {
     methods.push(options.method || 'GET')
-    if (options.method === 'POST') return new Response(JSON.stringify([{ link: 'http://127.0.0.1/private' }, { link: 'https://player.example/embed/123' }]), { headers: { 'content-type': 'application/json' } })
+    if (options.method === 'POST') return new Response(JSON.stringify([{ link: 'http://127.0.0.1/private' }, { name: 'First', link: 'https://player.example/embed/123' }, { name: 'Second', link: 'https://other.example/embed/456' }]), { headers: { 'content-type': 'application/json' } })
     return new Response('<div id="series-player" data-token="public-identifier"></div>', { headers: { 'content-type': 'text/html' } })
   }
   try {
@@ -73,6 +73,7 @@ test('public play action yields an embed without accepting private player addres
     const result = await (await onRequestPost({ request })).json()
     assert.equal(result.kind, 'video')
     assert.equal(result.embedUrl, 'https://player.example/embed/123')
+    assert.deepEqual(result.playerOptions, [{ name: 'First', url: 'https://player.example/embed/123' }, { name: 'Second', url: 'https://other.example/embed/456' }])
     assert.deepEqual(methods, ['GET', 'POST'])
   } finally { globalThis.fetch = originalFetch }
 })

@@ -60,6 +60,7 @@ function toMediaItem(analysis: AnalysisResult, draft: ImportDraft, pageAnalysis:
     kind: analysis.kind,
     sourceUrl: analysis.sourceUrl,
     embedUrl: analysis.embedUrl,
+    playerOptions: analysis.playerOptions,
     externalId: analysis.externalId,
     title: draft.title.trim() || analysis.title,
     description: analysis.description,
@@ -79,6 +80,7 @@ function toMediaItem(analysis: AnalysisResult, draft: ImportDraft, pageAnalysis:
 export default function App() {
   const [library, setLibrary] = useState<LibraryState | null>(null)
   const [activeId, setActiveId] = useState<string>()
+  const [selectedPlayer, setSelectedPlayer] = useState('')
   const [activePlaylistId, setActivePlaylistId] = useState<string>()
   const [activeChannelId, setActiveChannelId] = useState<string>()
   const [channelSlotId, setChannelSlotId] = useState<string>()
@@ -115,6 +117,11 @@ export default function App() {
   }, [])
 
   const active = library?.media.find((item) => item.id === activeId)
+  const activePlayer = useMemo(() => {
+    const option = active?.playerOptions?.find((entry) => entry.url === selectedPlayer)
+    return active && option ? { ...active, embedUrl: option.url } : active
+  }, [active, selectedPlayer])
+  useEffect(() => { setSelectedPlayer('') }, [activeId])
   const activePlaylist = library?.playlists.find((playlist) => playlist.id === activePlaylistId)
   const visibleMedia = useMemo(() => {
     if (!library) return []
@@ -173,8 +180,14 @@ export default function App() {
       const analysis = await enrichYouTubeItem(initial)
       if (library.media.some((item) => item.sourceUrl === analysis.sourceUrl)) {
         const existing = library.media.find((item) => item.sourceUrl === analysis.sourceUrl)
+        if (existing && !analysis.analysisUnavailable && (analysis.playerOptions?.length || (existing.kind === 'catalog' && analysis.kind === 'video'))) {
+          updateLibrary((current) => ({ ...current, media: current.media.map((item) => item.id === existing.id
+            ? { ...item, provider: analysis.provider, kind: analysis.kind, embedUrl: analysis.embedUrl, playerOptions: analysis.playerOptions } : item) }))
+          setNotice('Refreshed the available players for this title.')
+        } else {
+          setNotice('That source is already in your library.')
+        }
         setActiveId(existing?.id)
-        setNotice('That source is already in your library.')
         return
       }
       const item = toMediaItem(analysis, draft, pageAnalysis)
@@ -367,11 +380,12 @@ export default function App() {
         <section className="hero-grid">
           <div className="player-panel">
             <div className="section-eyebrow">NOW PLAYING</div>
-            <PlayerSurface key={activeChannelId ? channelSlotId : activeId} item={active} onEnded={activePlaylist ? nextInPlaylist : undefined} autoPlay={Boolean(activePlaylist || activeChannelId)} slotStart={activeChannelId ? channelSlotStart : undefined} />
+            <PlayerSurface key={activeChannelId ? channelSlotId : activeId} item={activePlayer} onEnded={activePlaylist ? nextInPlaylist : undefined} autoPlay={Boolean(activePlaylist || activeChannelId)} slotStart={activeChannelId ? channelSlotStart : undefined} />
             <div className="now-playing-meta">
               <div>
                 <h1>{active?.title ?? 'Your media, one screen.'}</h1>
                 {active && <p>{providerLabel(active.provider)} · {active.kind} · {formatRuntime(active.durationSeconds)}</p>}
+                {active && (active.playerOptions?.length ?? 0) > 1 && <label>Player <select value={selectedPlayer || active.embedUrl} onChange={(event) => setSelectedPlayer(event.target.value)}>{active.playerOptions?.map((option) => <option key={option.url} value={option.url}>{option.name}</option>)}</select></label>}
                 {active && safeExternalUrl(active.sourceUrl) && <a className="text-button" href={safeExternalUrl(active.sourceUrl)} target="_blank" rel="noopener noreferrer">Open original source ↗</a>}
               </div>
               {active && <div>{activePlaylist && <button className="secondary-button" onClick={nextInPlaylist}>Next in {activePlaylist.name} →</button>} <button className="secondary-button" onClick={() => addToWatchLater(active.id)}>＋ Watch later</button></div>}

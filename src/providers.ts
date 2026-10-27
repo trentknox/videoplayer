@@ -131,7 +131,7 @@ export async function analyzePublicPage(rawUrl: string): Promise<AnalysisResult>
     if (!result.embedUrl || !result.provider || !result.kind || !result.sourceUrl || !result.title) throw new Error('Invalid analyzer response')
     return {
       provider: result.provider as Provider, kind: result.kind, sourceUrl: result.sourceUrl, embedUrl: result.embedUrl,
-      externalId: result.externalId, title: result.title, poster: result.poster, description: result.description,
+      externalId: result.externalId, title: result.title, poster: result.poster, description: result.description, playerOptions: result.playerOptions,
       durationSeconds: result.durationSeconds ?? 900, notes: result.notes, listings: result.listings, catalogSections: result.catalogSections, suggestedCatalogUrl: result.suggestedCatalogUrl, nextCatalogUrl: result.nextCatalogUrl,
     }
   } catch {
