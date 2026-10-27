@@ -58,10 +58,13 @@ export interface ScheduleSlot {
   endsAt: string
 }
 
+export interface PlaybackHistoryEntry { mediaId: string; playedAt: string }
+
 export interface LibraryState {
   media: MediaItem[]
   playlists: Playlist[]
   channels: Channel[]
+  history?: PlaybackHistoryEntry[]
   catalogCursors?: Record<string, string>
   catalogJobs?: Record<string, CatalogJob>
   sources?: SavedSource[]

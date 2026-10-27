@@ -27,10 +27,12 @@ function loadYoutubeApi(): Promise<YoutubeApi> {
   return youtubeApiPromise
 }
 
-function YoutubeSurface({ item, onEnded, autoPlay, slotStart }: { item: MediaItem; onEnded?: () => void; autoPlay?: boolean; slotStart?: string }) {
+function YoutubeSurface({ item, onEnded, onStarted, autoPlay, slotStart }: { item: MediaItem; onEnded?: () => void; onStarted?: () => void; autoPlay?: boolean; slotStart?: string }) {
   const container = useRef<HTMLDivElement>(null)
   const endedRef = useRef(onEnded)
   endedRef.current = onEnded
+  const startedRef = useRef(onStarted)
+  startedRef.current = onStarted
   useEffect(() => {
     const parent = container.current
     if (!parent) return
@@ -50,7 +52,7 @@ function YoutubeSurface({ item, onEnded, autoPlay, slotStart }: { item: MediaIte
     parent.appendChild(frame)
     void loadYoutubeApi().then((api) => {
       if (cancelled) return
-      player = new api.Player(frame, { events: { onStateChange: (event) => { if (event.data === 0) endedRef.current?.() } } })
+      player = new api.Player(frame, { events: { onStateChange: (event) => { if (event.data === 0) endedRef.current?.(); if (event.data === 1) startedRef.current?.() } } })
     }).catch(() => { /* The iframe remains playable even if the API fails. */ })
     return () => { cancelled = true; player?.destroy(); frame.remove() }
   }, [item.id, item.embedUrl, item.title, item.kind, autoPlay, slotStart])
@@ -60,11 +62,12 @@ function YoutubeSurface({ item, onEnded, autoPlay, slotStart }: { item: MediaIte
 interface PlayerSurfaceProps {
   item?: MediaItem
   onEnded?: () => void
+  onStarted?: () => void
   autoPlay?: boolean
   slotStart?: string
 }
 
-export default function PlayerSurface({ item, onEnded, autoPlay, slotStart }: PlayerSurfaceProps) {
+export default function PlayerSurface({ item, onEnded, onStarted, autoPlay, slotStart }: PlayerSurfaceProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const hlsRef = useRef<Hls | null>(null)
   const [levels, setLevels] = useState<Array<{ index: number; label: string }>>([])
@@ -120,7 +123,7 @@ export default function PlayerSurface({ item, onEnded, autoPlay, slotStart }: Pl
     </div>
   }
 
-  if (item.provider === 'youtube') return <YoutubeSurface item={item} onEnded={onEnded} autoPlay={autoPlay} slotStart={slotStart} />
+  if (item.provider === 'youtube') return <YoutubeSurface item={item} onEnded={onEnded} onStarted={onStarted} autoPlay={autoPlay} slotStart={slotStart} />
 
   if (item.provider === 'direct' || isHls) {
     return (
@@ -132,6 +135,7 @@ export default function PlayerSurface({ item, onEnded, autoPlay, slotStart }: Pl
         autoPlay
         playsInline
         onEnded={onEnded}
+        onPlay={onStarted}
         onLoadedMetadata={(event) => {
           if (!slotStart || item.kind !== 'video') return
           const video = event.currentTarget

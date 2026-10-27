@@ -26,5 +26,15 @@ try {
   await page.getByRole('button', { name: 'Return to player' }).click()
   assert.equal(await original.evaluate((v) => v.isConnected && !v.paused), true)
   assert.equal(await page.locator('.mini-player-grid').count(), 0)
-  console.log('The same playing video survives mini-player and navigation transitions')
+  await page.getByRole('button', { name: 'history', exact: true }).click()
+  await page.getByRole('heading', { name: 'History' }).waitFor()
+  await page.locator('.history-view').getByText('Big Buck Bunny', { exact: true }).waitFor()
+  await page.waitForTimeout(300)
+  await page.reload()
+  await page.getByRole('button', { name: 'history', exact: true }).click()
+  await page.locator('.history-view').getByText('Big Buck Bunny', { exact: true }).waitFor()
+  await page.getByRole('button', { name: 'Clear history' }).click()
+  await page.getByText('Your recently played videos will appear here.').waitFor()
+  console.log('Playback survives mini-player navigation; history persists and clears')
 } finally { await context.close(); await browser.close() }
+

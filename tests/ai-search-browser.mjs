@@ -4,12 +4,28 @@ const browser = await chromium.launch({ executablePath: 'C:/Program Files (x86)/
 const context = await browser.newContext()
 const page = await context.newPage()
 try {
+  await page.route('**/api/analyze', async (route) => {
+    const sourceUrl = route.request().postDataJSON().url
+    await route.fulfill({ json: { provider: 'embed', kind: 'catalog', sourceUrl, embedUrl: sourceUrl, title: 'Catalog', listings: [{ url: 'https://catalog.example/new-video.mp4', title: 'New source video' }] } })
+  })
   await page.route('https://ai.example/v1/**', async (route) => {
     const path = new URL(route.request().url()).pathname
-    const payload = path === '/v1/login' ? { token: 'test-session' } : path === '/v1/infer' ? { text: JSON.stringify({ name: 'Animation channel', ids: ['big-buck-bunny', 'unknown'], action: 'channel' }) } : { ok: true }
+    const search = path === '/v1/infer' ? JSON.parse(route.request().postDataJSON().messages[1].content) : undefined
+    const match = search?.library.find((item) => item.title === 'New source video')
+    const payload = path === '/v1/login' ? { token: 'test-session' } : path === '/v1/infer' ? { text: JSON.stringify({ name: 'Animation channel', ids: [match?.id, 'unknown'], action: 'channel' }) } : { ok: true }
     await route.fulfill({ json: payload, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'POST, OPTIONS' } })
   })
   await page.goto('http://127.0.0.1:4181/')
+  await page.getByRole('button', { name: 'settings', exact: true }).click()
+  await page.waitForTimeout(400)
+  await page.evaluate(async () => {
+    const db = await new Promise((resolve) => { const request = indexedDB.open('vivid-media-library', 1); request.onsuccess = () => resolve(request.result) })
+    const state = await new Promise((resolve) => { const tx = db.transaction('state'); const request = tx.objectStore('state').get('library'); request.onsuccess = () => resolve(request.result) })
+    state.sources = [{ id: 'source', url: 'https://catalog.example/', lastChecked: new Date().toISOString() }]
+    await new Promise((resolve) => { const tx = db.transaction('state', 'readwrite'); tx.objectStore('state').put(state, 'library'); tx.oncomplete = resolve })
+    db.close()
+  })
+  await page.reload()
   await page.getByRole('button', { name: 'settings', exact: true }).click()
   await page.getByLabel('AI gateway URL').fill('https://ai.example')
   await page.getByLabel('AI account username').fill('demo')
@@ -21,8 +37,9 @@ try {
   await page.getByRole('button', { name: 'Ask AI' }).click()
   await page.getByRole('region', { name: 'AI search results' }).getByText('Animation channel').waitFor()
   assert.match(await page.getByRole('region', { name: 'AI search results' }).innerText(), /1 matches/)
+  await page.getByRole('region', { name: 'AI search results' }).getByText('New source video').waitFor()
   await page.getByRole('button', { name: 'channels', exact: true }).click()
   await page.getByRole('region', { name: 'Channel guide' }).getByRole('button', { name: 'Animation channel' }).waitFor()
-  console.log('AI search created a channel from validated catalog IDs using a mocked gateway')
+  console.log('AI search discovered a new saved-source title and created a channel using a mocked gateway')
 } finally { await context.close(); await browser.close() }
 

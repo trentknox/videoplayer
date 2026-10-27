@@ -11,12 +11,13 @@ import { defaultFilters, filterLibrary } from './filters'
 import { adjacentChannel } from './channelNavigation'
 import { startUpdateMonitor } from './updateMonitor'
 import { aiLogin, aiLogout, searchWithAi } from './aiSearch'
+import { discoverForSearch } from './searchSources'
 import type { AiSession, AiSearchResult } from './aiSearch'
 import type { LibraryFilters } from './filters'
 import { formatClock, makeSchedule, nowPlaying } from './scheduler'
 import type { AnalysisResult, Channel, ImportDraft, LibraryState, MediaItem, Playlist } from './types'
 
-type View = 'home' | 'library' | 'playlists' | 'channels' | 'settings'
+type View = 'home' | 'library' | 'playlists' | 'channels' | 'history' | 'settings'
 
 declare global {
   interface Window {
@@ -238,6 +239,16 @@ export default function App() {
     setDraft((current) => ({ ...current, [key]: value }))
   }
 
+  function recordPlayback(): void {
+    if (!activeId) return
+    const now = Date.now()
+    updateLibrary((current) => {
+      const previous = current.history ?? []
+      if (previous[0]?.mediaId === activeId && now - Date.parse(previous[0].playedAt) < 60_000) return current
+      return { ...current, history: [{ mediaId: activeId, playedAt: new Date(now).toISOString() }, ...previous].slice(0, 100) }
+    })
+  }
+
   function nextInPlaylist(): void {
     if (!activePlaylist || !library) return
     const ids = activePlaylist.mediaIds.filter((id) => library.media.some((item) => item.id === id))
@@ -375,15 +386,42 @@ export default function App() {
     setAiBusy(true)
     setAiResult(undefined)
     try {
-      const result = await searchWithAi(aiSession, homeSearch, library.media)
+      let media = library.media
+      let sourceStatus = ''
+      if ((library.sources?.length ?? 0) > 0) {
+        if (sourceSyncLock.current || importingRef.current) sourceStatus = ' A source scan is already running; search may be incomplete.'
+        else {
+          sourceSyncLock.current = true
+          setImporting(true)
+          importingRef.current = true
+          try {
+            setNotice('Checking saved sources for more titles…')
+            const discovered = await discoverForSearch(library.sources ?? [], media.map((item) => item.sourceUrl), library.catalogJobs ?? {}, analyzePublicPage)
+            const entries = discovered.listings.map((listing) => toMediaItem({ ...analyzeUrl(listing.url), title: listing.title, poster: listing.poster }, { ...blankDraft, url: listing.url, season: listing.season?.toString() ?? '', episode: listing.episode?.toString() ?? '' }, true))
+            media = [...entries, ...media]
+            updateLibrary((current) => {
+              const known = new Set(current.media.map((item) => item.sourceUrl))
+              const jobs = { ...current.catalogJobs }
+              for (const source of (library.sources ?? []).slice(0, 3)) {
+                if (!current.sources?.some((entry) => entry.url === source.url)) continue
+                if (discovered.jobs[source.url]) jobs[source.url] = discovered.jobs[source.url]
+                else delete jobs[source.url]
+              }
+              return { ...current, media: [...entries.filter((item) => !known.has(item.sourceUrl)), ...current.media], catalogJobs: jobs }
+            })
+            sourceStatus = ` Checked saved sources and found ${entries.length} new titles.${discovered.incomplete ? ' Some sources are incomplete or unavailable; search again to continue.' : ''}`
+          } finally { sourceSyncLock.current = false; importingRef.current = false; setImporting(false) }
+        }
+      }
+      const result = await searchWithAi(aiSession, homeSearch, media)
       setAiResult(result)
       if (result.ids.length && result.action !== 'search') {
         const playlist: Playlist = { id: makeId('playlist'), name: result.name, mediaIds: result.ids, createdAt: new Date().toISOString() }
         const channel: Channel | undefined = result.action === 'channel' ? { id: makeId('channel'), name: result.name, description: `Loops the ${result.name} playlist in order.`, filter: '', accent: accents[library.channels.length % accents.length], anchor: new Date().toISOString(), durationHours: 24, playlistId: playlist.id } : undefined
         updateLibrary((current) => ({ ...current, playlists: [playlist, ...current.playlists], channels: channel ? [channel, ...current.channels] : current.channels }))
         if (channel) setClock(new Date())
-        setNotice(`Created ${channel ? 'channel' : 'playlist'} “${result.name}” with ${result.ids.length} titles.`)
-      } else setNotice(result.ids.length ? `Found ${result.ids.length} titles.` : 'AI found no matching titles in the items it examined.')
+        setNotice(`Created ${channel ? 'channel' : 'playlist'} “${result.name}” with ${result.ids.length} titles.${sourceStatus}`)
+      } else setNotice((result.ids.length ? `Found ${result.ids.length} titles.` : 'AI found no matching titles in the items it examined.') + sourceStatus)
     } catch (error) { setNotice(error instanceof Error ? error.message : 'AI search failed.') }
     finally { setAiBusy(false) }
   }
@@ -542,7 +580,7 @@ export default function App() {
           <span className="brand-mark">V</span><span>Vivid</span>
         </button>
         <nav aria-label="Main navigation">
-          {(['home', 'library', 'playlists', 'channels', 'settings'] as View[]).map((name) => (
+          {(['home', 'library', 'playlists', 'channels', 'history', 'settings'] as View[]).map((name) => (
             <button key={name} className={view === name ? 'nav-active' : ''} onClick={() => setView(name)}>{name}</button>
           ))}
         </nav>
@@ -571,7 +609,7 @@ export default function App() {
           <div className="player-panel" ref={playerPanel}>
             {view !== 'home' || minimizedPlayer ? <button className="mini-player-return" onClick={() => { setMinimizedPlayer(false); setView('home') }}>Return to player ↗</button> : <button className="mini-player-return" onClick={() => setMinimizedPlayer(true)}>Mini-player ↘</button>}
             <div className="section-eyebrow">NOW PLAYING</div>
-            <PlayerSurface key={activeChannelId ? channelSlotId : activeId} item={activePlayer} onEnded={activePlaylist ? nextInPlaylist : undefined} autoPlay={Boolean(activePlaylist || activeChannelId)} slotStart={activeChannelId ? channelSlotStart : undefined} />
+            <PlayerSurface key={activeChannelId ? channelSlotId : activeId} item={activePlayer} onStarted={recordPlayback} onEnded={activePlaylist ? nextInPlaylist : undefined} autoPlay={Boolean(activePlaylist || activeChannelId)} slotStart={activeChannelId ? channelSlotStart : undefined} />
             <div className="now-playing-meta">
               <div>
                 <h1>{active?.title ?? 'Your media, one screen.'}</h1>
@@ -660,6 +698,15 @@ export default function App() {
           {library.channels.map((channel) => <ChannelCard key={channel.id} channel={channel} media={library.media} playlists={library.playlists} clock={clock} onPlay={() => playChannel(channel)} />)}
           {!library.channels.length && <div className="empty-state">Create a channel such as “Saturday Sci-Fi,” “Action by Keanu,” or “Live Creator Loop.”</div>}
         </div>
+      </section>}
+
+      {view === 'history' && <section className="content-section history-view">
+        <div className="section-heading"><div><span className="section-eyebrow">RECENTLY PLAYED</span><h1>History</h1><p>Videos you started on this device. Some embedded players do not report playback.</p></div>{(library.history?.length ?? 0) > 0 && <button className="secondary-button" onClick={() => updateLibrary((current) => ({ ...current, history: [] }))}>Clear history</button>}</div>
+        {(library.history ?? []).map((entry, index) => {
+          const item = library.media.find((candidate) => candidate.id === entry.mediaId)
+          return <article className="history-entry" key={`${entry.mediaId}-${entry.playedAt}-${index}`}><div><strong>{item?.title ?? 'Removed title'}</strong><p>{new Date(entry.playedAt).toLocaleString()}</p></div><div>{item && <button className="secondary-button" onClick={() => playFromLibrary(item.id)}>Play again</button>} <button className="text-button" aria-label={`Remove history entry ${item?.title ?? 'removed title'}`} onClick={() => updateLibrary((current) => ({ ...current, history: (current.history ?? []).filter((_, itemIndex) => itemIndex !== index) }))}>Remove</button></div></article>
+        })}
+        {!library.history?.length && <div className="empty-state">Your recently played videos will appear here.</div>}
       </section>}
 
       {view === 'settings' && <section className="content-section settings-view">

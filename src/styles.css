@@ -147,3 +147,6 @@ input:focus { border-color: #9b90ff; box-shadow: 0 0 0 3px rgba(155,144,255,.14)
 .mini-player-return { display: block; width: 100%; border: 0; background: #232540; color: white; padding: 6px; cursor: pointer; text-align: right; }
 
 .quality-control { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 6px 12px; font-size: .8rem; }
+
+.history-entry { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 0; border-bottom: 1px solid rgba(255,255,255,.1); }
+.history-entry p { margin: 4px 0 0; color: #aeb5d0; font-size: .85rem; }
