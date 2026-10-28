@@ -30,6 +30,24 @@ nav button, .text-button { border: 0; background: transparent; color: #a9adc6; p
 nav button:hover, nav .nav-active, .text-button:hover { color: #fff; background: rgba(255,255,255,.08); }
 .status-pill { display: inline-flex; align-items: center; gap: 8px; color: #c8c9dc; font-size: .8rem; }
 .status-pill span, .channel-signal span { width: 7px; height: 7px; border-radius: 50%; background: #42e7b2; box-shadow: 0 0 10px #42e7b2; }
+
+/* Tablet & mobile: scrollable horizontal nav sheet — swipe to reach every destination. */
+@media (max-width: 1279px) {
+  nav {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Desktop & up: fixed nav rail — all destinations visible, never scrolls. */
+@media (min-width: 1280px) {
+  nav {
+    overflow: visible;
+  }
+}
 .notice { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 18px 0 0; padding: 11px 14px; border: 1px solid rgba(149,132,255,.45); border-radius: 11px; color: #dedaff; background: rgba(68,57,123,.36); }
 .notice button, .remove-button { border: 0; color: inherit; background: transparent; font-size: 1.2rem; }
 
@@ -133,7 +151,7 @@ input:focus { border-color: #9b90ff; box-shadow: 0 0 0 3px rgba(155,144,255,.14)
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @media (max-width: 1050px) { .media-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } .hero-grid { grid-template-columns: 1fr; } }
-@media (max-width: 720px) { .app-shell, .loading-screen { width: min(100% - 26px, 1500px); } .topbar { align-items: flex-start; flex-wrap: wrap; padding-bottom: 14px; gap: 10px; } nav { order: 3; width: 100%; overflow-x: auto; } .status-pill { margin-left: auto; } .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .playlist-grid, .channel-grid, .settings-grid { grid-template-columns: 1fr; } .inline-form, .form-row { flex-direction: column; grid-template-columns: 1fr; } .now-playing-meta, .section-heading { align-items: flex-start; flex-direction: column; } .search-input { max-width: none; } }
+@media (max-width: 720px) { .app-shell, .loading-screen { width: min(100% - 26px, 1500px); } .topbar { align-items: flex-start; flex-wrap: wrap; padding-bottom: 14px; gap: 10px; } .status-pill { margin-left: auto; } .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .playlist-grid, .channel-grid, .settings-grid { grid-template-columns: 1fr; } .inline-form, .form-row { flex-direction: column; grid-template-columns: 1fr; } .now-playing-meta, .section-heading { align-items: flex-start; flex-direction: column; } .search-input { max-width: none; } }
 
 /* Keep the same player alive while browsing other sections. */
 [hidden] { display: none !important; }

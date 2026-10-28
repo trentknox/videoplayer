@@ -8,6 +8,7 @@ import { advanceCatalogJob } from './catalogJob'
 import { movePlaylistItem } from './playlist'
 import { dueSource } from './sources'
 import { defaultFilters, filterLibrary, mediaType, mediaYear } from './filters'
+import { formatStat } from './stats'
 import { adjacentChannel } from './channelNavigation'
 import { startUpdateMonitor } from './updateMonitor'
 import { posterSources } from './posters'
@@ -145,6 +146,7 @@ export default function App() {
   const [aiType, setAiType] = useState('')
   const [aiGenre, setAiGenre] = useState('')
   const [aiDialogOpen, setAiDialogOpen] = useState(false)
+  const lastNavRef = useRef<HTMLButtonElement | null>(null)
   const [aiFeedback, setAiFeedback] = useState('')
   const [filters, setFilters] = useState<LibraryFilters>(defaultFilters)
   const [playlistName, setPlaylistName] = useState('')
@@ -961,9 +963,24 @@ export default function App() {
         <button className="brand" onClick={() => setView('home')} aria-label="Go home">
           <span className="brand-mark">V</span><span>Vivid</span>
         </button>
-        <nav aria-label="Main navigation">
+        <nav
+          aria-label="Main navigation"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && lastNavRef.current) {
+              lastNavRef.current.focus();
+            }
+          }}
+        >
           {(['home', 'player', 'library', 'playlists', 'channels', 'history', 'settings'] as View[]).map((name) => (
-            <button key={name} className={view === name ? 'nav-active' : ''} onClick={() => setView(name)}>{name}</button>
+            <button
+              key={name}
+              className={view === name ? 'nav-active' : ''}
+              onFocus={(event) => {
+                const target = event.target as HTMLElement;
+                if (target instanceof HTMLButtonElement) lastNavRef.current = target;
+              }}
+              onClick={() => setView(name)}
+            >{name}</button>
           ))}
         </nav>
         <div className="status-pill"><span /> Local-first library</div>
@@ -1068,7 +1085,7 @@ export default function App() {
         </div>
         <button className="secondary-button" disabled={importing} onClick={() => void repairPosters(true)}>Refresh missing posters</button>
         <p className="fine-print">Filters use the metadata available for each title; some sources do not provide genre, country, ratings, or financial details.</p>
-        <div className="filter-summary">{visibleMedia.length} item{visibleMedia.length === 1 ? '' : 's'} · Stored in this browser</div>
+        <div className="filter-summary">{formatStat({ value: visibleMedia.length, unit: visibleMedia.length === 1 ? 'item' : 'items', source: 'local library', period: 'this session', state: 'measured' })}</div>
         <MediaGrid media={visibleMedia} activeId={activeId} onPlay={playFromLibrary} onRemove={removeMedia} />
       </section>}
 

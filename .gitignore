@@ -10,3 +10,4 @@ release-catalog/
 *.tsbuildinfo
 .env
 .dev.vars
+server/__pycache__/
