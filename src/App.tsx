@@ -676,7 +676,12 @@ export default function App() {
         result = { ...result, ids, suggestions }
       }
       setAiResult(result)
-      setAiFeedback((result.ids.length ? `Found ${result.ids.length} titles. Review the preview below.` : 'No matching titles were found in the items examined.') + sourceStatus + (keywordFallback ? ` AI is unavailable; these are keyword matches.${aiFailure ? ` ${aiFailure}` : ''}` : ''))
+      const modelNote = aiSession && !keywordFallback && result.servedModel
+        ? ` Served by ${result.servedModel}.`
+        : keywordFallback
+        ? ' AI unavailable; these are keyword matches.'
+        : ''
+      setAiFeedback((result.ids.length ? `Found ${result.ids.length} titles. Review the preview below.` : 'No matching titles were found in the items examined.') + sourceStatus + aiFailure + modelNote)
     } catch (error) { setAiFeedback(error instanceof Error ? error.message : 'AI search failed.') }
     finally { setAiBusy(false) }
   }

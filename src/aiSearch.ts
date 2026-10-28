@@ -2,7 +2,7 @@ import type { MediaItem } from './types'
 import { mediaType } from './filters.ts'
 
 export interface AiSession { endpoint: string; token: string }
-export interface AiSearchResult { name: string; ids: string[]; action: 'search' | 'playlist' | 'channel'; suggestions: Array<{ name: string; ids: string[] }>; examined: number; total: number }
+export interface AiSearchResult { name: string; ids: string[]; action: 'search' | 'playlist' | 'channel'; suggestions: Array<{ name: string; ids: string[] }>; examined: number; total: number; servedModel?: string }
 
 export function gatewayUrl(value: string): string {
   const url = new URL(value.trim())
@@ -49,9 +49,10 @@ export async function searchWithAi(session: AiSession, query: string, media: Med
   if (!response.ok) throw new Error(response.status === 403 ? 'AI session expired or is not authorized. Sign in again in Settings.' : `AI search unavailable (HTTP ${response.status}).`)
   const payload = await response.json() as { text?: unknown }
   if (typeof payload.text !== 'string') throw new Error('The AI gateway returned an invalid response.')
-  let parsed: { name?: unknown; ids?: unknown; action?: unknown; suggestions?: unknown }
+  let parsed: { name?: unknown; ids?: unknown; action?: unknown; suggestions?: unknown; model?: unknown }
   try { parsed = JSON.parse(payload.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')) } catch { throw new Error('The AI could not return a usable search result. Try a simpler request.') }
-  if (!Array.isArray(parsed.ids)) throw new Error('The AI returned an invalid title list.')
+  if (!Array.isArray(parsed.ids)) throw new Error('The AI returned an invalid title list')
+  const servedModel = typeof parsed.model === 'string' && parsed.model.trim() ? parsed.model.trim() : undefined
   const ids = [...new Set(parsed.ids.filter((id): id is string => typeof id === 'string' && originalId.has(id)).map((id) => originalId.get(id)!))].slice(0, 150)
   const selected = new Set(ids)
   const suggestions: Array<{ name: string; ids: string[] }> = []
@@ -72,7 +73,7 @@ export async function searchWithAi(session: AiSession, query: string, media: Med
     if (!suggestions.some((group) => group.name.toLowerCase() === name.toLowerCase())) suggestions.push({ name, ids: groupIds })
   }
   const action = /\bchannel\b/i.test(query) ? 'channel' : /\bplaylist\b/i.test(query) ? 'playlist' : 'search'
-  return { name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim().slice(0, 100) : query.trim().slice(0, 100), ids, action, suggestions, examined: entries.length, total: media.length }
+  return { name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim().slice(0, 100) : query.trim().slice(0, 100), ids, action, suggestions, servedModel, examined: entries.length, total: media.length }
 }
 
 /** Suggest groups only when matching titles actually share a series prefix. */
