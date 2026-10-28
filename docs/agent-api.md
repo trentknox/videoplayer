@@ -10,6 +10,6 @@ Use an authenticated HTTPS endpoint for deployed instances. `VIVID_URL` is the s
 - `channels:manage`: `channel.create` accepts `{ "playlistId": "..." }` for an existing unlocked playlist. It creates a looping virtual channel.
 - `inference`: `POST /v1/infer` uses the server's configured model; it does not add or configure a user's inference provider.
 
-For actions, POST `{ "action": "source.add", "data": { "url": "https://example.com/catalog" } }` with `Authorization: Bearer <token>`. Mutations are serialized in the account database and return the new revision. A bot token cannot create or revoke tokens, change profile policies, access locked content, or grant itself additional scopes.
+For actions, POST `{ "action": "source.add", "data": { "url": "https://example.com/catalog" } }` with `Authorization: Bearer ***`. Mutations are serialized in the account database and return the new revision. A bot token cannot create or revoke tokens, change profile policies, access locked content, or grant itself additional scopes.
 
 The prototype exposes only a limited metadata view to agents; it does not provide credential-bearing playback URLs. Bot changes reach signed-in browser libraries through private synchronization; provider-specific authorization may still be needed for playback.

@@ -53,7 +53,7 @@ Paste a Cloudflare Stream video, live-input, player, or manifest link into the i
 
 ## Import boundary
 
-For ordinary public pages, the optional analyzer looks only for normal public metadata and elements such as `og:video`, `VideoObject`, `video`, `source`, and `iframe`. It refuses private/local addresses and does not evade DRM, authentication, paywalls, robots controls, signed-URL controls, CORS, or rate limits. For a full catalog, connect a provider-approved API, RSS feed, sitemap, or an owned-server index.
+For ordinary public pages, the optional analyzer reads public metadata and elements (primary `og:` and `twitter:` tags, `<meta>` values, `<video>`/`<source>`/`<iframe>` sources, and `<a href>` listings) without whitelisting any single provider. It refuses protocols other than `http(s)`; it does not test hosts against private or local networks. It does not evade DRM, authentication, paywalls, robots controls, signed-URL controls, CORS, or rate limits. For a full catalog, connect a provider-approved API, RSS feed, sitemap, or an owned-server index.
 
 ## Open-source research
 
