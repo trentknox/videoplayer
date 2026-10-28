@@ -18,7 +18,19 @@ npm install
 npm run dev
 ```
 
-Open the local Vite URL shown in the terminal. To run the desktop shell:
+Open the local Vite URL shown in the terminal.
+
+### Requirements for the test runner
+
+`npm test` runs the Node test suite with built-in type stripping
+(`--experimental-strip-types`), which requires Node >= 22.8. This box runs
+Node 20.20.2, so `npm test` fails with `node: bad option: --experimental-strip-types`
+until the project is exercised on a Node 22+ toolchain (or the test script is
+rewritten for the installed runtime). `npm install`, `npm run build`, and
+`npm run dev` all work on Node 20.20.2.
+
+The production build (`npm run build` → `web-dist/`, plus `npm run desktop`)
+does not require Node 22. To run the desktop shell:
 
 ```powershell
 npm run desktop
